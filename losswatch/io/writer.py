@@ -10,7 +10,6 @@ import torch
 
 from losswatch.core.config import LossWatchConfig
 
-
 GLOBAL_SCHEMA = pa.schema([
     pa.field("step", pa.int64()),
     pa.field("loss", pa.float64()),

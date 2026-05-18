@@ -4,8 +4,8 @@ from losswatch.core.detector import SpikeDetector
 from losswatch.core.metrics import (
     compute_activation_metrics,
     compute_gradient_metrics,
-    compute_weight_metrics,
     compute_weight_histogram,
+    compute_weight_metrics,
 )
 
 __all__ = [

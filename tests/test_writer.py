@@ -1,9 +1,7 @@
 import json
 import pickle
-from pathlib import Path
 
 import pyarrow.ipc as ipc
-import torch
 
 from losswatch.core.config import LossWatchConfig
 from losswatch.io.writer import DiskWriter
