@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "losswatch"
+name = "trainscope"
 version = "0.1.0"
 description = "Post-mortem debugger for LLM training loss spikes"
 readme = "README.md"
@@ -30,22 +30,22 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kaelvalen/losswatch"
-Repository = "https://github.com/kaelvalen/losswatch"
-"Bug Tracker" = "https://github.com/kaelvalen/losswatch/issues"
+Homepage = "https://github.com/kaelvalen/trainscope"
+Repository = "https://github.com/kaelvalen/trainscope"
+"Bug Tracker" = "https://github.com/kaelvalen/trainscope/issues"
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "ruff>=0.4"]
 
 [project.scripts]
-losswatch = "losswatch.cli:cli"
+trainscope = "trainscope.cli:cli"
 
 [tool.hatch.build.targets.wheel]
-packages = ["losswatch"]
-# The React build (npm run build) emits into losswatch/ui/static/ which is not
+packages = ["trainscope"]
+# The React build (npm run build) emits into trainscope/ui/static/ which is not
 # tracked by VCS. Mark it as an artifact so hatchling includes it in the wheel
 # even when building in a clean git checkout where the directory may be absent.
-artifacts = ["losswatch/ui/static/**"]
+artifacts = ["trainscope/ui/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

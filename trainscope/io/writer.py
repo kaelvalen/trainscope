@@ -8,7 +8,7 @@ import pyarrow as pa
 import pyarrow.ipc as ipc
 import torch
 
-from losswatch.core.config import LossWatchConfig
+from trainscope.core.config import TrainScopeConfig
 
 GLOBAL_SCHEMA = pa.schema([
     pa.field("step", pa.int64()),
@@ -39,9 +39,9 @@ FLUSH_INTERVAL = 100
 
 
 class DiskWriter:
-    def __init__(self, run_path: Path, losswatch_config: LossWatchConfig):
+    def __init__(self, run_path: Path, trainscope_config: TrainScopeConfig):
         self._run_path = run_path
-        self._config = losswatch_config
+        self._config = trainscope_config
 
         self._run_path.mkdir(parents=True, exist_ok=True)
         (self._run_path / "layers").mkdir(exist_ok=True)
@@ -72,7 +72,7 @@ class DiskWriter:
         meta = {
             "model_name": model_name,
             "model_config": model_config,
-            "losswatch_config": {
+            "trainscope_config": {
                 "run_dir": self._config.run_dir,
                 "run_name": self._config.run_name,
                 "full_resolution_window": self._config.full_resolution_window,

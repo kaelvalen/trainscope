@@ -1,7 +1,7 @@
-from losswatch.core.buffer import RollingBuffer
-from losswatch.core.config import LossWatchConfig
-from losswatch.core.detector import SpikeDetector
-from losswatch.core.metrics import (
+from trainscope.core.buffer import RollingBuffer
+from trainscope.core.config import TrainScopeConfig
+from trainscope.core.detector import SpikeDetector
+from trainscope.core.metrics import (
     compute_activation_metrics,
     compute_gradient_metrics,
     compute_weight_histogram,
@@ -9,7 +9,7 @@ from losswatch.core.metrics import (
 )
 
 __all__ = [
-    "LossWatchConfig",
+    "TrainScopeConfig",
     "compute_activation_metrics",
     "compute_gradient_metrics",
     "compute_weight_metrics",

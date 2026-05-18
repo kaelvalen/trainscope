@@ -2,21 +2,21 @@
 Mini GPT-2 spike demo.
 
 Trains a 2-layer GPT-2-style model on random token sequences, artificially
-injects a loss spike at step SPIKE_STEP, and shows losswatch detecting it.
+injects a loss spike at step SPIKE_STEP, and shows trainscope detecting it.
 
 Usage:
     python examples/gpt2_spike_demo.py
 
 Then open the UI:
-    losswatch ui --run ./losswatch_runs/<run-name>
+    trainscope ui --run ./trainscope_runs/<run-name>
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from losswatch import LossWatch
-from losswatch.core.config import LossWatchConfig
+from trainscope import TrainScope
+from trainscope.core.config import TrainScopeConfig
 
 VOCAB = 256
 SEQ_LEN = 32
@@ -103,8 +103,8 @@ def main():
     #   recommended (+ activation_layer_filter): ~89%
     #   minimal  (hist/50, act/50, filter):      ~52%
     # GPU overhead is significantly lower (~3-8%) due to parallelism.
-    config = LossWatchConfig(
-        run_dir="./losswatch_runs",
+    config = TrainScopeConfig(
+        run_dir="./trainscope_runs",
         spike_threshold=3.5,
         stop_on_spike=False,
         full_resolution_window=500,
@@ -114,14 +114,14 @@ def main():
         # activation_layer_filter=["attn", "mlp"],
     )
 
-    watch = LossWatch(model, optimizer, config=config).attach()
-    watch.writer.write_meta(
+    scope = TrainScope(model, optimizer, config=config).attach()
+    scope.writer.write_meta(
         "MiniGPT",
         {"vocab": VOCAB, "d_model": D_MODEL, "n_heads": N_HEADS, "n_layers": N_LAYERS},
     )
 
     print(f"Device: {device}")
-    print(f"Run:    ./losswatch_runs/{config.run_name}")
+    print(f"Run:    ./trainscope_runs/{config.run_name}")
     print(f"Steps:  {N_STEPS}  (spike injected at step {SPIKE_STEP})\n")
 
     for step in range(N_STEPS):
@@ -139,7 +139,7 @@ def main():
         loss.backward()
         optimizer.step()
 
-        spike = watch.step(loss.item(), batch_index=step)
+        spike = scope.step(loss.item(), batch_index=step)
 
         if spike:
             print(
@@ -149,12 +149,12 @@ def main():
         elif step % 20 == 0:
             print(f"  step={step:3d}  loss={loss.item():.4f}")
 
-    watch.writer.flush()
-    watch.writer.close()
-    watch.detach()
+    scope.writer.flush()
+    scope.writer.close()
+    scope.detach()
 
     print(f"\nDone. Open the UI with:")
-    print(f"  losswatch ui --run ./losswatch_runs/{config.run_name}")
+    print(f"  trainscope ui --run ./trainscope_runs/{config.run_name}")
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ jobs:
         run: |
           npm install
           npm run build
-        # vite outDir is ../losswatch/ui/static — build lands directly in the package
+        # vite outDir is ../trainscope/ui/static — build lands directly in the package
 
       - name: Build wheel + sdist
         run: hatch build

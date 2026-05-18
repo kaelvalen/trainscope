@@ -6,7 +6,7 @@ class SkippingDataLoader:
 
     Usage::
 
-        from losswatch.replay import SkippingDataLoader
+        from trainscope.replay import SkippingDataLoader
         import json
 
         with open("replay_config.json") as f:

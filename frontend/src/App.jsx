@@ -84,10 +84,10 @@ export default function App() {
   return (
     <div style={styles.app}>
       <div style={styles.header}>
-        <span style={styles.title}>LossWatch</span>
+        <span style={styles.title}>TrainScope</span>
         {meta && (
           <span style={styles.meta}>
-            Run: <strong style={{ color: '#e2e8f0' }}>{meta.losswatch_config?.run_name || '—'}</strong>
+            Run: <strong style={{ color: '#e2e8f0' }}>{meta.trainscope_config?.run_name || '—'}</strong>
           </span>
         )}
         {spikeCount > 0 && (

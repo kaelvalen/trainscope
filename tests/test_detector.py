@@ -1,4 +1,4 @@
-from losswatch.core.detector import SpikeDetector
+from trainscope.core.detector import SpikeDetector
 
 
 class TestSpikeDetector:

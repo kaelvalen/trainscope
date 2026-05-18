@@ -51,7 +51,7 @@ def _variance(values: list[float]) -> float:
 
 def create_app(run_path: str) -> FastAPI:
     rp = Path(run_path)
-    app = FastAPI(title="LossWatch UI")
+    app = FastAPI(title="TrainScope UI")
     _cache: dict = {}  # keyed by "diff" and "ranked"
 
     static_dir = Path(__file__).parent / "static"
@@ -179,7 +179,7 @@ _FALLBACK_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>LossWatch</title>
+<title>TrainScope</title>
 <script src="https://cdn.plot.ly/plotly-2.29.0.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -204,7 +204,7 @@ button.action:hover{background:#5facee}
 </head>
 <body>
 <header>
-  <h1>LossWatch</h1>
+  <h1>TrainScope</h1>
   <span id="meta-info">loading…</span>
 </header>
 <nav>
@@ -281,7 +281,7 @@ async function init(){
   globalData=global_; spikes=spikes_;
 
   if(meta){
-    const rn=meta.losswatch_config?.run_name??'unknown';
+    const rn=meta.trainscope_config?.run_name??'unknown';
     const sc=spikes_.length;
     document.getElementById('meta-info').innerHTML=
       `<b>${rn}</b> &nbsp; ${global_.length} steps &nbsp; `+

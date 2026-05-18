@@ -1,8 +1,8 @@
-# losswatch
+# trainscope
 
 Post-mortem debugger for LLM training loss spikes.
 
-When a spike hits, you usually know *that* it happened but not *why*. losswatch records per-layer gradients, weight distributions, and activation kurtosis at every step, then lets you scrub back through the event in a browser UI.
+When a spike hits, you usually know *that* it happened but not *why*. trainscope records per-layer gradients, weight distributions, and activation kurtosis at every step, then lets you scrub back through the event in a browser UI.
 
 ## Install
 
@@ -15,27 +15,27 @@ Dependencies: `torch`, `pyarrow`, `fastapi`, `uvicorn`, `click`, `numpy`.
 ## Quickstart
 
 ```python
-from losswatch import LossWatch
-from losswatch.core.config import LossWatchConfig
+from trainscope import TrainScope
+from trainscope.core.config import TrainScopeConfig
 
-watch = LossWatch(model, optimizer, config=LossWatchConfig()).attach()
+scope = TrainScope(model, optimizer, config=TrainScopeConfig()).attach()
 
 for step, batch in enumerate(dataloader):
     loss = forward_and_backward(batch)
     optimizer.step()
 
-    spike = watch.step(loss.item(), batch_index=step)
+    spike = scope.step(loss.item(), batch_index=step)
     if spike:
         print(f"Spike at step {spike['step']}, z={spike['z_score']:.2f}")
 
-watch.writer.close()
-watch.detach()
+scope.writer.close()
+scope.detach()
 ```
 
 Then open the UI:
 
 ```bash
-losswatch ui --run ./losswatch_runs/<run-name>
+trainscope ui --run ./trainscope_runs/<run-name>
 ```
 
 ## What gets recorded
@@ -90,16 +90,16 @@ cd frontend && npm install && npm run build
 
 ```bash
 # Open UI for a completed or in-progress run
-losswatch ui --run ./losswatch_runs/run_20250516_143022 [--host 127.0.0.1] [--port 7007]
+trainscope ui --run ./trainscope_runs/run_20250516_143022 [--host 127.0.0.1] [--port 7007]
 
 # Generate replay_config.json (does NOT resume training automatically)
-losswatch replay --checkpoint ./checkpoints/step_4400.pt --skip-batches 4521,4522,4523 [--resume]
+trainscope replay --checkpoint ./checkpoints/step_4400.pt --skip-batches 4521,4522,4523 [--resume]
 ```
 
 To actually skip batches, use `SkippingDataLoader` in your training script:
 
 ```python
-from losswatch.replay import SkippingDataLoader
+from trainscope.replay import SkippingDataLoader
 import json
 
 with open("replay_config.json") as f:
@@ -113,8 +113,8 @@ for batch in loader:
 ## Configuration
 
 ```python
-LossWatchConfig(
-    run_dir="./losswatch_runs",                 # output root
+TrainScopeConfig(
+    run_dir="./trainscope_runs",                 # output root
     spike_threshold=3.5,                     # z-score threshold (rolling window baseline)
     full_resolution_window=500,              # last N steps at full resolution
     decimation_factor=10,                    # older steps: keep every Nth
@@ -135,13 +135,13 @@ LossWatchConfig(
 python examples/gpt2_spike_demo.py
 ```
 
-Trains a 2-layer mini-GPT, injects a ×50 loss spike at step 50, and shows losswatch detecting it. Run `losswatch ui` on the output directory to explore the event.
+Trains a 2-layer mini-GPT, injects a ×50 loss spike at step 50, and shows trainscope detecting it. Run `trainscope ui` on the output directory to explore the event.
 
 ## Storage layout
 
 ```
-losswatch_runs/<run-name>/
-    meta.json                          model config + losswatch config
+trainscope_runs/<run-name>/
+    meta.json                          model config + trainscope config
     global.arrow                       step-level scalars (Arrow IPC)
     layers/<param-name>.arrow          per-layer metrics
     spikes/spike_step_<N>.arrow        global window around spike N

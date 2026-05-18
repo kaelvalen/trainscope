@@ -4,8 +4,8 @@ from datetime import datetime
 
 
 @dataclass
-class LossWatchConfig:
-    run_dir: str = "./losswatch_runs"
+class TrainScopeConfig:
+    run_dir: str = "./trainscope_runs"
     run_name: str | None = None
     # Full-resolution data is kept for the last `full_resolution_window` steps.
     # Older steps are decimated (kept every `decimation_factor`-th step).
@@ -31,7 +31,7 @@ class LossWatchConfig:
     stop_on_spike: bool = False
     trace_every_n_steps: int = 1
     # DDP rank: when set, appends _rank{rank} to the run directory to avoid
-    # file collisions when each process creates its own LossWatch.
+    # file collisions when each process creates its own TrainScope.
     rank: int | None = None
 
     def __post_init__(self):

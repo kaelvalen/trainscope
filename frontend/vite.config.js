@@ -9,6 +9,6 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: '../losswatch/ui/static'
+    outDir: '../trainscope/ui/static'
   }
 })

@@ -3,8 +3,8 @@ import pickle
 
 import pyarrow.ipc as ipc
 
-from losswatch.core.config import LossWatchConfig
-from losswatch.io.writer import DiskWriter
+from trainscope.core.config import TrainScopeConfig
+from trainscope.io.writer import DiskWriter
 
 
 def make_global_snap(step: int = 0):
@@ -38,7 +38,7 @@ def make_layer_snap(step: int = 0):
 
 class TestDiskWriter:
     def test_write_meta_creates_file(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
         writer.write_meta("TestModel", {"layers": 12, "hidden": 768})
@@ -50,11 +50,11 @@ class TestDiskWriter:
             meta = json.load(f)
         assert meta["model_name"] == "TestModel"
         assert meta["model_config"]["layers"] == 12
-        assert "losswatch_config" in meta
+        assert "trainscope_config" in meta
         assert "start_time" in meta
 
     def test_append_global_flush_creates_arrow(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
 
@@ -74,7 +74,7 @@ class TestDiskWriter:
         assert "is_spike" in table.schema.names
 
     def test_global_arrow_values_correct(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
 
@@ -93,7 +93,7 @@ class TestDiskWriter:
         assert d["is_spike"][0] is True
 
     def test_append_layer_flush_creates_arrow(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
 
@@ -112,7 +112,7 @@ class TestDiskWriter:
         assert "hist_counts" in table.schema.names
 
     def test_layer_with_slash_in_name(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
 
@@ -124,7 +124,7 @@ class TestDiskWriter:
         assert safe_file.exists()
 
     def test_save_rng_state(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
         writer.save_rng_state(99)
@@ -138,7 +138,7 @@ class TestDiskWriter:
         assert "numpy_rng" in state
 
     def test_auto_flush_at_interval(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
 
@@ -155,7 +155,7 @@ class TestDiskWriter:
         assert table.num_rows == 100
 
     def test_directory_structure_created(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
         writer.close()
@@ -165,7 +165,7 @@ class TestDiskWriter:
         assert (run_path / "rng_states").is_dir()
 
     def test_write_spike_window_writes_layer_data(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
 
@@ -193,7 +193,7 @@ class TestDiskWriter:
         assert "hist_counts" in table.schema.names
 
     def test_multiple_layers(self, tmp_path):
-        config = LossWatchConfig(run_dir=str(tmp_path), run_name="test_run")
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"
         writer = DiskWriter(run_path, config)
 

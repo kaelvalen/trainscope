@@ -2,7 +2,7 @@ import math
 
 import torch
 
-from losswatch.core.metrics import (
+from trainscope.core.metrics import (
     compute_activation_metrics,
     compute_gradient_metrics,
     compute_weight_histogram,

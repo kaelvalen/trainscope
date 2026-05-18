@@ -39,9 +39,9 @@
 
           shellHook = ''
             export PYTHONPATH="${toString ./.}:$PYTHONPATH"
-            echo "losswatch dev shell (Python 3.12)"
+            echo "trainscope dev shell (Python 3.12)"
             echo "  pytest -q"
-            echo "  ruff check losswatch/ tests/"
+            echo "  ruff check trainscope/ tests/"
             echo "  cd frontend && npm install && npm run build"
           '';
         };

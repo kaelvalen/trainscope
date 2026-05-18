@@ -7,16 +7,16 @@ import torch
 import torch.nn as nn
 from torch.optim import Optimizer
 
-from losswatch.core.buffer import RollingBuffer
-from losswatch.core.config import LossWatchConfig
-from losswatch.core.detector import SpikeDetector
-from losswatch.core.metrics import (
+from trainscope.core.buffer import RollingBuffer
+from trainscope.core.config import TrainScopeConfig
+from trainscope.core.detector import SpikeDetector
+from trainscope.core.metrics import (
     compute_activation_metrics,
     compute_gradient_metrics,
     compute_weight_histogram,
     compute_weight_metrics,
 )
-from losswatch.io.writer import DiskWriter
+from trainscope.io.writer import DiskWriter
 
 
 class StopTraining(Exception):
@@ -26,16 +26,16 @@ class StopTraining(Exception):
         self.z_score = z_score
 
 
-class LossWatch:
+class TrainScope:
     def __init__(
         self,
         model: nn.Module,
         optimizer: Optimizer,
-        config: LossWatchConfig | None = None,
+        config: TrainScopeConfig | None = None,
     ):
         self._model = model
         self._optimizer = optimizer
-        self._config = config or LossWatchConfig()
+        self._config = config or TrainScopeConfig()
 
         run_path = Path(self._config.run_dir) / self._config.run_name
         if self._config.rank is not None:
@@ -56,7 +56,7 @@ class LossWatch:
     def writer(self) -> DiskWriter:
         return self._writer
 
-    def attach(self) -> "LossWatch":
+    def attach(self) -> "TrainScope":
         for name, module in self._model.named_modules():
             children = list(module.children())
             if children:

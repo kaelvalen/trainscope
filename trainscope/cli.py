@@ -10,12 +10,12 @@ def cli():
 
 
 @cli.command()
-@click.option("--run", required=True, help="Path to the losswatch run directory")
+@click.option("--run", required=True, help="Path to the trainscope run directory")
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=7007, show_default=True, type=int)
 def ui(run: str, host: str, port: int):
-    from losswatch.ui.server import start_server
-    click.echo(f"Starting LossWatch UI for run: {run}")
+    from trainscope.ui.server import start_server
+    click.echo(f"Starting TrainScope UI for run: {run}")
     click.echo(f"Open http://{host}:{port} in your browser")
     start_server(run, host=host, port=port)
 
@@ -37,7 +37,7 @@ def replay(checkpoint: str, skip_batches: str, resume: bool):
     """Generate a replay_config.json for use with SkippingDataLoader.
 
     This command does NOT automatically resume training. It writes a
-    replay_config.json that you pass to losswatch.replay.SkippingDataLoader in
+    replay_config.json that you pass to trainscope.replay.SkippingDataLoader in
     your training script to skip the batches that caused the loss spike.
     """
     ckpt_path = Path(checkpoint)
@@ -64,7 +64,7 @@ def replay(checkpoint: str, skip_batches: str, resume: bool):
     if resume:
         click.echo(
             "\nTo resume training, use SkippingDataLoader in your script:\n\n"
-            "  from losswatch.replay import SkippingDataLoader\n"
+            "  from trainscope.replay import SkippingDataLoader\n"
             "  import json\n\n"
             "  with open('replay_config.json') as f:\n"
             "      cfg = json.load(f)\n\n"

@@ -1,4 +1,4 @@
-from losswatch.core.buffer import RollingBuffer
+from trainscope.core.buffer import RollingBuffer
 
 
 def make_snap(step: int):

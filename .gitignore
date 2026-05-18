@@ -35,12 +35,12 @@ htmlcov/
 pip-log.txt
 pip-delete-this-directory.txt
 
-# Frontend (Vite build lands in losswatch/ui/static)
+# Frontend (Vite build lands in trainscope/ui/static)
 frontend/node_modules/
-losswatch/ui/static/
+trainscope/ui/static/
 
 # Runtime / local data
-losswatch_runs/
+trainscope_runs/
 *.parquet
 
 # IDE / editor
