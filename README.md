@@ -1,5 +1,8 @@
 # trainscope
-
+[![PyPI](https://img.shields.io/pypi/v/trainscope)](https://pypi.org/project/trainscope)
+[![Python](https://img.shields.io/pypi/pyversions/trainscope)](https://pypi.org/project/trainscope)
+[![CI](https://github.com/kaelvalen/trainscope/actions/workflows/ci.yml/badge.svg)](https://github.com/kaelvalen/trainscope/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 Post-mortem debugger for LLM training loss spikes.
 
 When a spike hits, you usually know *that* it happened but not *why*. trainscope records per-layer gradients, weight distributions, and activation kurtosis at every step, then lets you scrub back through the event in a browser UI.
