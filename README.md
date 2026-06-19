@@ -154,13 +154,3 @@ trainscope_runs/<run-name>/
 ```
 
 Estimated storage: ~10 MB/step at full resolution. Rolling 500-step window → ~5 GB max for a 1B-param model. Spike windows are small.
-
-## Publishing
-
-CI runs on every push to `main` and every PR (`pytest` + `ruff`, Python 3.11 + 3.12, Vite build).
-
-To publish a release to PyPI:
-1. Set up [Trusted Publishing](https://docs.pypi.org/trusted-publishers/) on PyPI for this repo (environment name: `pypi`).
-2. Tag and push: `git tag v0.1.0 && git push origin v0.1.0`
-
-The publish workflow builds the React frontend, bundles it into the wheel, and uploads via OIDC — no API token needed.
