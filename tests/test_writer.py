@@ -2,6 +2,7 @@ import json
 import pickle
 
 import pyarrow.ipc as ipc
+import torch
 
 from trainscope.core.config import TrainScopeConfig
 from trainscope.io.writer import DiskWriter
@@ -120,7 +121,7 @@ class TestDiskWriter:
         writer.flush()
         writer.close()
 
-        safe_file = run_path / "layers" / "transformer__h__0__attn.arrow"
+        safe_file = run_path / "layers" / "transformer%2Fh%2F0%2Fattn.arrow"
         assert safe_file.exists()
 
     def test_save_rng_state(self, tmp_path):
@@ -205,3 +206,123 @@ class TestDiskWriter:
 
         for name in ["layer0.weight", "layer1.weight", "layer2.weight"]:
             assert (run_path / "layers" / f"{name}.arrow").exists()
+
+    def test_context_manager_closes_writer(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        with DiskWriter(run_path, config) as writer:
+            writer.append_global(make_global_snap(0))
+        assert writer._closed is True
+        assert (run_path / "global.arrow").exists()
+
+    def test_layer_name_encoding_reversible(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+
+        # Pathological name with slashes, dots, and double underscores.
+        name = "transformer/h__0/attn.c_proj"
+        writer.append_layer(name, make_layer_snap(0))
+        writer.flush()
+        writer.close()
+
+        encoded = DiskWriter._encode_layer_name(name)
+        assert DiskWriter._decode_layer_name(encoded + ".arrow") == name
+        assert (run_path / "layers" / f"{encoded}.arrow").exists()
+
+    def test_resume_appends_global_rows(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+
+        writer = DiskWriter(run_path, config)
+        for i in range(5):
+            writer.append_global(make_global_snap(i))
+        writer.close()
+
+        config_resume = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run", resume=True)
+        writer2 = DiskWriter(run_path, config_resume)
+        for i in range(5, 10):
+            writer2.append_global(make_global_snap(i))
+        writer2.flush()
+        writer2.close()
+
+        reader = ipc.open_file(str(run_path / "global.arrow"))
+        table = reader.read_all()
+        assert table.num_rows == 10
+        assert list(table.column("step").to_pylist()) == list(range(10))
+
+    def test_resume_preserves_rows_across_multiple_flushes(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+
+        writer = DiskWriter(run_path, config)
+        for i in range(3):
+            writer.append_global(make_global_snap(i))
+        writer.close()
+
+        config_resume = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run", resume=True)
+        writer2 = DiskWriter(run_path, config_resume)
+        for i in range(3, 6):
+            writer2.append_global(make_global_snap(i))
+        writer2.flush()
+        for i in range(6, 9):
+            writer2.append_global(make_global_snap(i))
+        writer2.flush()
+        writer2.close()
+
+        reader = ipc.open_file(str(run_path / "global.arrow"))
+        table = reader.read_all()
+        assert table.num_rows == 9
+        assert list(table.column("step").to_pylist()) == list(range(9))
+
+    def test_resume_appends_layer_rows(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+
+        writer = DiskWriter(run_path, config)
+        writer.append_layer("layer0", make_layer_snap(0))
+        writer.append_layer("layer0", make_layer_snap(1))
+        writer.close()
+
+        config_resume = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run", resume=True)
+        writer2 = DiskWriter(run_path, config_resume)
+        writer2.append_layer("layer0", make_layer_snap(2))
+        writer2.flush()
+        writer2.close()
+
+        reader = ipc.open_file(str(run_path / "layers" / "layer0.arrow"))
+        table = reader.read_all()
+        assert table.num_rows == 3
+
+    def test_manifest_written_on_close(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+        for i in range(3):
+            writer.append_global(make_global_snap(i))
+        writer.append_layer("fc.weight", make_layer_snap(0))
+        writer.close()
+
+        manifest_file = run_path / "manifest.json"
+        assert manifest_file.exists()
+        with open(manifest_file) as f:
+            manifest = json.load(f)
+        assert manifest["n_global_rows"] == 3
+        assert manifest["last_step"] == 2
+        assert "layer_files" in manifest
+        assert "fc.weight" in manifest["layer_files"]
+
+    def test_save_checkpoint(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+        state = {"param": torch.tensor([1.0, 2.0])}
+        writer.save_checkpoint(7, state, optimizer_state={"lr": 0.1})
+        writer.close()
+
+        ckpt_file = run_path / "checkpoints" / "7.pt"
+        assert ckpt_file.exists()
+        loaded = torch.load(str(ckpt_file), weights_only=False)
+        assert loaded["step"] == 7
+        assert "model_state_dict" in loaded
+        assert "optimizer_state_dict" in loaded

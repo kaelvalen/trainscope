@@ -34,6 +34,7 @@ class TestSpikeDetector:
     def test_z_score_approximately_correct(self):
         det = SpikeDetector(threshold=0.0)
         import random
+
         random.seed(42)
         base = [random.gauss(0, 1) for _ in range(100)]
         for v in base:
@@ -44,6 +45,7 @@ class TestSpikeDetector:
 
     def test_threshold_respected(self):
         import random
+
         random.seed(0)
         det = SpikeDetector(threshold=10.0)
         for _ in range(50):
@@ -64,6 +66,7 @@ class TestSpikeDetector:
 
     def test_rolling_window_forgets_old_values(self):
         import random
+
         random.seed(1)
         # With window=50, values added more than 50 steps ago are forgotten.
         det = SpikeDetector(threshold=3.5, window=50)
@@ -82,3 +85,49 @@ class TestSpikeDetector:
             det.update(1.0)
         result = det.update(1.0)
         assert result is None or isinstance(result, float)
+
+    def test_warmup_property(self):
+        det = SpikeDetector(min_observations=10)
+        assert det.warmup is True
+        for _ in range(10):
+            det.update(1.0)
+        assert det.warmup is False
+
+    def test_custom_min_observations(self):
+        det = SpikeDetector(threshold=3.5, min_observations=5)
+        for _ in range(5):
+            det.update(1.0)
+        result = det.update(100.0)
+        assert result is not None
+
+    def test_welford_matches_baseline_statistics(self):
+        import random
+
+        random.seed(7)
+        det = SpikeDetector(threshold=3.5, window=50)
+        values = [random.gauss(2.0, 0.5) for _ in range(50)]
+        for v in values:
+            det.update(v)
+        # Welford mean/variance should equal the classic one over the history.
+        mean = sum(values) / len(values)
+        var = sum((x - mean) ** 2 for x in values) / (len(values) - 1)
+        assert abs(det._mean - mean) < 1e-6
+        assert abs(det._m2 / (det._count - 1) - var) < 1e-6
+
+    def test_robust_mode_median_mad(self):
+        det = SpikeDetector(threshold=3.5, min_observations=10, robust=True)
+        for _ in range(10):
+            det.update(1.0)
+        result = det.update(100.0)
+        assert result is not None
+        assert result > 0
+
+    def test_robust_mode_respects_threshold(self):
+        det = SpikeDetector(threshold=10.0, min_observations=10, robust=True)
+        for _ in range(5):
+            det.update(1.0)
+        for _ in range(5):
+            det.update(1.1)  # introduce non-zero MAD
+        # median=1.05, MAD=0.05 -> robust z for 1.5 is ~6, below threshold 10.
+        result = det.update(1.5)
+        assert result is None

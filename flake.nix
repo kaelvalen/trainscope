@@ -27,12 +27,20 @@
           hatchling
           pip
         ]);
+        trainscope-cli = pkgs.writeShellScriptBin "trainscope" ''
+          export PYTHONPATH="${toString ./.}:$PYTHONPATH"
+          exec ${pythonEnv}/bin/python -m trainscope "$@"
+        '';
       in {
+        packages.default = trainscope-cli;
+        packages.trainscope = trainscope-cli;
+
         devShells.default = pkgs.mkShell {
           packages = [
             pythonEnv
             pkgs.nodejs_20
             pkgs.direnv
+            trainscope-cli
           ];
 
           env.PYTHONNOUSERSITE = "1";
@@ -40,6 +48,8 @@
           shellHook = ''
             export PYTHONPATH="${toString ./.}:$PYTHONPATH"
             echo "trainscope dev shell (Python 3.12)"
+            echo "  trainscope --version"
+            echo "  trainscope ui --run ./trainscope_runs/<run-name>"
             echo "  pytest -q"
             echo "  ruff check trainscope/ tests/"
             echo "  cd frontend && npm install && npm run build"
