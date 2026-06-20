@@ -5,10 +5,12 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://localhost:7007'
-    }
+      '/api': 'http://localhost:7007',
+    },
   },
   build: {
-    outDir: '../trainscope/ui/static'
-  }
+    outDir: '../trainscope/ui/static',
+    emptyOutDir: true,
+    chunkSizeWarningLimit: 2000,
+  },
 })

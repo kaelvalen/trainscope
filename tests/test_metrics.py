@@ -1,5 +1,6 @@
 import math
 
+import pytest
 import torch
 
 from trainscope.core.metrics import (
@@ -15,7 +16,15 @@ class TestComputeActivationMetrics:
         t = torch.randn(16, 32)
         m = compute_activation_metrics(t)
         assert all(math.isfinite(v) for v in m.values())
-        assert set(m.keys()) == {"act_mean", "act_std", "act_max_abs", "act_kurtosis"}
+        assert set(m.keys()) == {
+            "act_mean",
+            "act_std",
+            "act_max_abs",
+            "act_kurtosis",
+            "act_min",
+            "act_max",
+            "act_median",
+        }
 
     def test_empty_tensor(self):
         t = torch.empty(0)
@@ -125,3 +134,49 @@ class TestComputeWeightHistogram:
             assert isinstance(v, float)
         for v in edges:
             assert isinstance(v, float)
+
+    def test_histogram_with_nan_inf(self):
+        w = torch.tensor([1.0, 2.0, float("nan"), float("inf")])
+        counts, edges = compute_weight_histogram(w, n_bins=4)
+        assert len(counts) == 4
+        assert len(edges) == 5
+        assert sum(counts) == 2.0
+
+
+class TestNewMetricFields:
+    def test_activation_min_max_median(self):
+        t = torch.tensor([1.0, 2.0, 3.0, 4.0])
+        m = compute_activation_metrics(t)
+        assert m["act_min"] == 1.0
+        assert m["act_max"] == 4.0
+        # torch.median returns the lower median for an even-length tensor.
+        assert m["act_median"] == 2.0
+
+    def test_gradient_max_abs_and_mean(self):
+        g = torch.tensor([-3.0, 1.0, 2.0])
+        m = compute_gradient_metrics(g)
+        assert m["grad_max_abs"] == 3.0
+        assert m["grad_mean"] == 0.0
+
+    def test_weight_mean_std_min_max(self):
+        w = torch.tensor([1.0, 2.0, 3.0, 4.0])
+        m = compute_weight_metrics(w)
+        assert m["weight_mean"] == 2.5
+        assert abs(m["weight_std"] - 1.1180) < 1e-3
+        assert m["weight_max_abs"] == 4.0
+        assert m["weight_min"] == 1.0
+
+
+class TestDeviceOffloading:
+    def test_cpu_offloading_from_cuda_if_available(self):
+        if not torch.cuda.is_available():
+            pytest.skip("CUDA not available")
+        t = torch.randn(4, 4, device="cuda")
+        m = compute_activation_metrics(t, device="cpu")
+        assert isinstance(m["act_mean"], float)
+        assert m["act_mean"] == pytest.approx(t.float().mean().item())
+
+    def test_same_device_when_requested(self):
+        t = torch.randn(4, 4)
+        m = compute_weight_metrics(t, device="cpu")
+        assert m["weight_mean"] == pytest.approx(t.mean().item())

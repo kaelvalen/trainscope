@@ -98,7 +98,7 @@ def main():
     model = MiniGPT().to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
-    # Overhead profiles (measured on CPU, 2-layer GPT-2, 144 params):
+    # Overhead profiles (measured on CPU, 2-layer GPT-2, ~430K params):
     #   default  (hist/50, act/5):             ~121% overhead
     #   recommended (+ activation_layer_filter): ~89%
     #   minimal  (hist/50, act/50, filter):      ~52%
@@ -110,6 +110,7 @@ def main():
         full_resolution_window=500,
         histogram_every_n_steps=50,
         activation_metrics_every_n_steps=5,
+        track_memory=True,
         # Uncomment to enable recommended profile:
         # activation_layer_filter=["attn", "mlp"],
     )
@@ -137,9 +138,12 @@ def main():
             print(f"  [inject] step={step}  loss={loss.item():.4f}  (×{SPIKE_MULTIPLIER})")
 
         loss.backward()
-        optimizer.step()
 
+        # Record metrics between backward() and step() so gradients are captured
+        # before the optimizer mutates parameters.
         spike = scope.step(loss.item(), batch_index=step)
+
+        optimizer.step()
 
         if spike:
             print(
@@ -153,7 +157,7 @@ def main():
     scope.writer.close()
     scope.detach()
 
-    print(f"\nDone. Open the UI with:")
+    print("\nDone. Open the UI with:")
     print(f"  trainscope ui --run ./trainscope_runs/{config.run_name}")
 
 

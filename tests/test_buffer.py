@@ -1,3 +1,5 @@
+import pytest
+
 from trainscope.core.buffer import RollingBuffer
 
 
@@ -84,3 +86,32 @@ class TestRollingBuffer:
             buf.add(make_snap(i), make_layer_snap(i))
         steps = [s["step"] for s in buf.get_global_steps()]
         assert steps == sorted(steps)
+
+    def test_no_duplicate_steps(self):
+        buf = RollingBuffer(full_resolution_window=5, decimation_factor=2)
+        for i in range(12):
+            buf.add(make_snap(i), make_layer_snap(i))
+        steps = [s["step"] for s in buf.get_global_steps()]
+        assert len(steps) == len(set(steps))
+
+    def test_decimated_history_bounded(self):
+        window = 10
+        factor = 2
+        buf = RollingBuffer(full_resolution_window=window, decimation_factor=factor)
+        for i in range(window * 100):
+            buf.add(make_snap(i), make_layer_snap(i))
+        assert len(buf._decimated) <= window * 10
+
+    def test_requires_step_key(self):
+        buf = RollingBuffer()
+        with pytest.raises(ValueError):
+            buf.add({"loss": 1.0}, {})
+
+    def test_get_window_includes_decimated_and_full(self):
+        buf = RollingBuffer(full_resolution_window=5, decimation_factor=2)
+        for i in range(20):
+            buf.add(make_snap(i), make_layer_snap(i))
+        window = buf.get_window(center_step=2, before=5, after=5)
+        win_steps = [e["global"]["step"] for e in window]
+        assert 2 in win_steps
+        assert all(0 <= s <= 7 for s in win_steps)

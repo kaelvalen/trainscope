@@ -61,3 +61,4 @@ result-*
 flake.lock.bak
 
 # Local tooling
+.deps/

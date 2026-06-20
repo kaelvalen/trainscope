@@ -1,46 +1,39 @@
-import { useState, useEffect } from 'react'
-import Plot from 'react-plotly.js'
-import { fetchSpikes, fetchSpike, fetchSpikeLayerNames, fetchSpikeLayer } from '../api.js'
-
-const DARK_LAYOUT = {
-  paper_bgcolor: '#1a1f2e',
-  plot_bgcolor: '#0f1117',
-  font: { color: '#e2e8f0', size: 12 },
-  margin: { l: 60, r: 20, t: 40, b: 40 },
-  xaxis: { gridcolor: '#2d3748', zerolinecolor: '#2d3748' },
-  yaxis: { gridcolor: '#2d3748', zerolinecolor: '#2d3748' },
-}
-
-function spikeShape(step) {
-  return [{
-    type: 'line',
-    x0: step, x1: step,
-    yref: 'paper', y0: 0, y1: 1,
-    line: { color: 'rgba(252, 129, 129, 0.8)', width: 1.5, dash: 'dot' },
-  }]
-}
+import { useState, useEffect, useMemo } from 'react'
+import { useRun } from '../RunContext.jsx'
+import { fetchSpike, fetchSpikeLayerNames, fetchSpikeLayer } from '../api.js'
+import { spikeShape, CHART_COLORS } from '../theme.js'
+import Chart from '../components/Chart.jsx'
+import LayerSelect from '../components/LayerSelect.jsx'
+import LoadingSpinner from '../components/LoadingSpinner.jsx'
+import ErrorMessage from '../components/ErrorMessage.jsx'
+import EmptyState from '../components/EmptyState.jsx'
 
 export default function SpikeInspector() {
-  const [spikes, setSpikes] = useState([])
+  const { spikes } = useRun()
   const [selectedSpike, setSelectedSpike] = useState(null)
   const [globalWindow, setGlobalWindow] = useState([])
   const [layerNames, setLayerNames] = useState([])
   const [selectedLayer, setSelectedLayer] = useState('')
   const [layerWindow, setLayerWindow] = useState([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
-    fetchSpikes().then(setSpikes).catch(() => {})
-  }, [])
+    if (spikes.length > 0 && selectedSpike == null) {
+      setSelectedSpike(spikes[0].step)
+    }
+  }, [spikes, selectedSpike])
 
   useEffect(() => {
     if (selectedSpike == null) return
+
+    let cancelled = false
     setLoading(true)
-    Promise.all([
-      fetchSpike(selectedSpike),
-      fetchSpikeLayerNames(selectedSpike),
-    ])
+    setError(null)
+
+    Promise.all([fetchSpike(selectedSpike), fetchSpikeLayerNames(selectedSpike)])
       .then(([gRows, lNames]) => {
+        if (cancelled) return
         setGlobalWindow(gRows)
         setLayerNames(lNames)
         if (lNames.length > 0) {
@@ -50,151 +43,159 @@ export default function SpikeInspector() {
           setLayerWindow([])
         }
       })
-      .catch(console.error)
-      .finally(() => setLoading(false))
+      .catch((err) => {
+        if (!cancelled) setError(err?.message || 'Failed to load spike window.')
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [selectedSpike])
 
   useEffect(() => {
     if (!selectedLayer || selectedSpike == null) return
+
+    let cancelled = false
     fetchSpikeLayer(selectedSpike, selectedLayer)
-      .then(setLayerWindow)
-      .catch(console.error)
+      .then((rows) => {
+        if (!cancelled) setLayerWindow(rows)
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err?.message || `Failed to load ${selectedLayer}.`)
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [selectedSpike, selectedLayer])
 
+  const windowSteps = useMemo(() => globalWindow.map((r) => r.step), [globalWindow])
+  const shapes = useMemo(
+    () =>
+      selectedSpike != null
+        ? [spikeShape(selectedSpike, { color: 'rgba(252, 129, 129, 0.8)' })]
+        : [],
+    [selectedSpike]
+  )
+  const layerSteps = useMemo(() => layerWindow.map((r) => r.step), [layerWindow])
+
   if (spikes.length === 0) {
-    return (
-      <div style={{ color: '#718096', padding: '40px', textAlign: 'center' }}>
-        No spikes recorded in this run.
-      </div>
-    )
+    return <EmptyState icon="⚡">No spikes recorded in this run.</EmptyState>
   }
-
-  const windowSteps = globalWindow.map(r => r.step)
-  const shapes = selectedSpike != null ? spikeShape(selectedSpike) : []
-
-  const layerSteps = layerWindow.map(r => r.step)
 
   return (
     <div>
-      <div style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-        <label style={{ fontSize: '13px', color: '#718096' }}>Spike:</label>
+      <div className="ts-control-row">
+        <label htmlFor="spike-select" className="ts-label">
+          Spike:
+        </label>
         <select
+          id="spike-select"
           value={selectedSpike ?? ''}
-          onChange={e => setSelectedSpike(Number(e.target.value))}
-          style={{
-            background: '#1a1f2e', border: '1px solid #2d3748', color: '#e2e8f0',
-            padding: '6px 12px', borderRadius: '6px', fontSize: '13px',
-          }}
+          onChange={(e) => setSelectedSpike(Number(e.target.value))}
+          className="ts-select"
         >
           <option value="">— select —</option>
-          {spikes.map(s => (
-            <option key={s.step} value={s.step}>Step {s.step}</option>
+          {spikes.map((s) => (
+            <option key={s.step} value={s.step}>
+              Step {s.step}
+            </option>
           ))}
         </select>
 
         {layerNames.length > 0 && (
-          <>
-            <label style={{ fontSize: '13px', color: '#718096' }}>Layer:</label>
-            <select
-              value={selectedLayer}
-              onChange={e => setSelectedLayer(e.target.value)}
-              style={{
-                background: '#1a1f2e', border: '1px solid #2d3748', color: '#e2e8f0',
-                padding: '6px 12px', borderRadius: '6px', fontSize: '13px',
-                maxWidth: '360px', flex: 1,
-              }}
-            >
-              {layerNames.map(name => (
-                <option key={name} value={name}>{name}</option>
-              ))}
-            </select>
-          </>
+          <LayerSelect
+            id="spike-layer-select"
+            label="Layer:"
+            layers={layerNames}
+            value={selectedLayer}
+            onChange={setSelectedLayer}
+          />
         )}
       </div>
 
-      {loading && (
-        <div style={{ color: '#718096', padding: '40px', textAlign: 'center' }}>
-          Loading spike window…
-        </div>
-      )}
+      {loading && <LoadingSpinner message="Loading spike window…" />}
+      <ErrorMessage message={error} />
 
       {!loading && globalWindow.length > 0 && (
-        <>
-          <Plot
-            data={[
-              {
-                x: windowSteps,
-                y: globalWindow.map(r => r.loss),
-                type: 'scatter', mode: 'lines',
-                name: 'Loss',
-                line: { color: '#63b3ed', width: 1.5 },
-              },
-              {
-                x: windowSteps,
-                y: globalWindow.map(r => r.grad_norm_before_clip),
-                type: 'scatter', mode: 'lines',
-                name: 'Grad Norm',
-                line: { color: '#68d391', width: 1.5 },
-                yaxis: 'y2',
-              },
-            ]}
-            layout={{
-              ...DARK_LAYOUT,
-              title: { text: `Loss + Grad Norm — spike window (step ${selectedSpike})`, font: { size: 14 } },
-              height: 260,
-              shapes,
-              yaxis2: {
-                overlaying: 'y', side: 'right',
-                gridcolor: '#2d3748', color: '#68d391',
-                title: { text: 'Grad Norm', font: { color: '#68d391', size: 11 } },
-              },
-              legend: { orientation: 'h', y: -0.15 },
-            }}
-            config={{ displayModeBar: false, responsive: true }}
-            style={{ width: '100%' }}
-            useResizeHandler
-          />
-        </>
+        <Chart
+          data={[
+            {
+              x: windowSteps,
+              y: globalWindow.map((r) => r.loss),
+              type: 'scatter',
+              mode: 'lines',
+              name: 'Loss',
+              line: { color: CHART_COLORS.loss, width: 1.5 },
+            },
+            {
+              x: windowSteps,
+              y: globalWindow.map((r) => r.grad_norm_before_clip),
+              type: 'scatter',
+              mode: 'lines',
+              name: 'Grad Norm',
+              line: { color: CHART_COLORS.gradNorm, width: 1.5 },
+              yaxis: 'y2',
+            },
+          ]}
+          layout={{
+            title: {
+              text: `Loss + Grad Norm — spike window (step ${selectedSpike})`,
+              font: { size: 14 },
+            },
+            height: 260,
+            shapes,
+            yaxis2: {
+              overlaying: 'y',
+              side: 'right',
+              gridcolor: CHART_COLORS.muted,
+              color: CHART_COLORS.gradNorm,
+              title: { text: 'Grad Norm', font: { color: CHART_COLORS.gradNorm, size: 11 } },
+            },
+            legend: { orientation: 'h', y: -0.15 },
+          }}
+        />
       )}
 
       {!loading && layerWindow.length > 0 && selectedLayer && (
         <>
-          <Plot
-            data={[{
-              x: layerSteps,
-              y: layerWindow.map(r => r.act_kurtosis),
-              type: 'scatter', mode: 'lines',
-              name: 'Kurtosis',
-              line: { color: '#f6ad55', width: 1.5 },
-            }]}
+          <Chart
+            data={[
+              {
+                x: layerSteps,
+                y: layerWindow.map((r) => r.act_kurtosis),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Kurtosis',
+                line: { color: CHART_COLORS.kurtosis, width: 1.5 },
+              },
+            ]}
             layout={{
-              ...DARK_LAYOUT,
               title: { text: `Activation Kurtosis — ${selectedLayer}`, font: { size: 14 } },
               height: 220,
               shapes,
             }}
-            config={{ displayModeBar: false, responsive: true }}
-            style={{ width: '100%' }}
-            useResizeHandler
           />
 
-          <Plot
-            data={[{
-              x: layerSteps,
-              y: layerWindow.map(r => r.grad_l2_norm),
-              type: 'scatter', mode: 'lines',
-              name: 'Grad L2',
-              line: { color: '#68d391', width: 1.5 },
-            }]}
+          <Chart
+            data={[
+              {
+                x: layerSteps,
+                y: layerWindow.map((r) => r.grad_l2_norm),
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Grad L2',
+                line: { color: CHART_COLORS.gradNorm, width: 1.5 },
+              },
+            ]}
             layout={{
-              ...DARK_LAYOUT,
               title: { text: `Gradient L2 Norm — ${selectedLayer}`, font: { size: 14 } },
               height: 220,
               shapes,
             }}
-            config={{ displayModeBar: false, responsive: true }}
-            style={{ width: '100%' }}
-            useResizeHandler
           />
         </>
       )}

@@ -1,121 +1,87 @@
-import { useState, useEffect } from 'react'
-import { fetchMeta, fetchSpikes } from './api.js'
+import { useState } from 'react'
+import { useRun } from './RunContext.jsx'
 import Timeline from './views/Timeline.jsx'
 import LayerDrilldown from './views/LayerDrilldown.jsx'
 import DiffView from './views/DiffView.jsx'
 import SpikeInspector from './views/SpikeInspector.jsx'
+import LoadingSpinner from './components/LoadingSpinner.jsx'
+import ErrorMessage from './components/ErrorMessage.jsx'
+import ErrorBoundary from './components/ErrorBoundary.jsx'
+import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp.jsx'
+import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js'
 
-const TABS = ['Timeline', 'Layer Drill-down', 'Diff View', 'Spike Inspector']
-
-const styles = {
-  app: {
-    minHeight: '100vh',
-    background: '#0f1117',
-    color: '#e2e8f0',
-  },
-  header: {
-    background: '#1a1f2e',
-    borderBottom: '1px solid #2d3748',
-    padding: '16px 24px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '24px',
-  },
-  title: {
-    fontSize: '20px',
-    fontWeight: 700,
-    color: '#63b3ed',
-    letterSpacing: '-0.5px',
-  },
-  meta: {
-    fontSize: '13px',
-    color: '#718096',
-  },
-  spikeTag: {
-    background: '#742a2a',
-    color: '#fc8181',
-    borderRadius: '4px',
-    padding: '2px 8px',
-    fontSize: '12px',
-    fontWeight: 600,
-  },
-  tabs: {
-    display: 'flex',
-    gap: '0',
-    borderBottom: '1px solid #2d3748',
-    background: '#1a1f2e',
-    padding: '0 24px',
-  },
-  tab: {
-    padding: '10px 20px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    fontWeight: 500,
-    borderBottom: '2px solid transparent',
-    color: '#718096',
-    background: 'none',
-    border: 'none',
-    borderBottom: '2px solid transparent',
-    transition: 'color 0.15s',
-  },
-  tabActive: {
-    color: '#63b3ed',
-    borderBottom: '2px solid #63b3ed',
-  },
-  content: {
-    padding: '24px',
-  },
-}
+const TABS = [
+  { label: 'Timeline', shortcut: '1', component: Timeline },
+  { label: 'Layer Drill-down', shortcut: '2', component: LayerDrilldown },
+  { label: 'Diff View', shortcut: '3', component: DiffView },
+  { label: 'Spike Inspector', shortcut: '4', component: SpikeInspector },
+]
 
 export default function App() {
   const [activeTab, setActiveTab] = useState(0)
-  const [meta, setMeta] = useState(null)
-  const [spikeCount, setSpikeCount] = useState(0)
+  const { meta, spikes, loading, error, refresh, isReady } = useRun()
 
-  useEffect(() => {
-    fetchMeta()
-      .then(setMeta)
-      .catch(() => {})
-    fetchSpikes()
-      .then(spikes => setSpikeCount(spikes.length))
-      .catch(() => {})
-  }, [])
+  useKeyboardShortcuts(
+    {
+      1: () => setActiveTab(0),
+      2: () => setActiveTab(1),
+      3: () => setActiveTab(2),
+      4: () => setActiveTab(3),
+      ArrowLeft: () => setActiveTab((i) => Math.max(0, i - 1)),
+      ArrowRight: () => setActiveTab((i) => Math.min(TABS.length - 1, i + 1)),
+    },
+    []
+  )
+
+  const ActiveComponent = TABS[activeTab].component
+  const spikeCount = spikes.length
 
   return (
-    <div style={styles.app}>
-      <div style={styles.header}>
-        <span style={styles.title}>TrainScope</span>
+    <div className="ts-app">
+      <header className="ts-header">
+        <span className="ts-title">TrainScope</span>
         {meta && (
-          <span style={styles.meta}>
-            Run: <strong style={{ color: '#e2e8f0' }}>{meta.trainscope_config?.run_name || '—'}</strong>
+          <span className="ts-meta">
+            Run:{' '}
+            <strong style={{ color: 'var(--text)' }}>
+              {meta.trainscope_config?.run_name || '—'}
+            </strong>
           </span>
         )}
         {spikeCount > 0 && (
-          <span style={styles.spikeTag}>{spikeCount} spike{spikeCount !== 1 ? 's' : ''}</span>
+          <span className="ts-spike-tag">
+            {spikeCount} spike{spikeCount !== 1 ? 's' : ''}
+          </span>
         )}
-      </div>
+        <div className="ts-header-actions">
+          <KeyboardShortcutsHelp />
+        </div>
+      </header>
 
-      <div style={styles.tabs}>
+      <nav className="ts-tabs" role="tablist" aria-label="View tabs">
         {TABS.map((tab, i) => (
           <button
-            key={tab}
-            style={{
-              ...styles.tab,
-              ...(activeTab === i ? styles.tabActive : {}),
-            }}
+            key={tab.label}
+            role="tab"
+            aria-selected={activeTab === i}
+            className={`ts-tab ${activeTab === i ? 'ts-tab-active' : ''}`}
             onClick={() => setActiveTab(i)}
+            title={`${tab.label} (press ${tab.shortcut})`}
           >
-            {tab}
+            {tab.label}
           </button>
         ))}
-      </div>
+      </nav>
 
-      <div style={styles.content}>
-        {activeTab === 0 && <Timeline />}
-        {activeTab === 1 && <LayerDrilldown />}
-        {activeTab === 2 && <DiffView />}
-        {activeTab === 3 && <SpikeInspector />}
-      </div>
+      <main className="ts-content">
+        {loading && <LoadingSpinner message="Loading run data…" />}
+        {!loading && error && <ErrorMessage message={error} onRetry={refresh} />}
+        {!loading && !error && isReady && (
+          <ErrorBoundary>
+            <ActiveComponent />
+          </ErrorBoundary>
+        )}
+      </main>
     </div>
   )
 }

@@ -1,186 +1,171 @@
-import { useState, useEffect, useCallback } from 'react'
-import Plot from 'react-plotly.js'
-import { fetchGlobal, fetchLayers, fetchLayersRanked, fetchLayer } from '../api.js'
-
-const DARK_LAYOUT = {
-  paper_bgcolor: '#1a1f2e',
-  plot_bgcolor: '#0f1117',
-  font: { color: '#e2e8f0', size: 12 },
-  margin: { l: 60, r: 20, t: 40, b: 40 },
-  xaxis: { gridcolor: '#2d3748', zerolinecolor: '#2d3748' },
-  yaxis: { gridcolor: '#2d3748', zerolinecolor: '#2d3748' },
-}
+import { useState, useEffect, useMemo } from 'react'
+import { useRun } from '../RunContext.jsx'
+import { fetchLayersRanked, fetchLayer } from '../api.js'
+import { spikeShape, scrubLineShape, truncateLayerName, CHART_COLORS } from '../theme.js'
+import Chart from '../components/Chart.jsx'
+import StepScrubber from '../components/StepScrubber.jsx'
+import LoadingSpinner from '../components/LoadingSpinner.jsx'
+import ErrorMessage from '../components/ErrorMessage.jsx'
+import EmptyState from '../components/EmptyState.jsx'
 
 function buildSpikeShapes(rows) {
-  return rows
-    .filter(r => r.is_spike)
-    .map(r => ({
-      type: 'line',
-      x0: r.step,
-      x1: r.step,
-      yref: 'paper',
-      y0: 0,
-      y1: 1,
-      line: { color: 'rgba(252, 129, 129, 0.6)', width: 1.5, dash: 'dot' },
-    }))
+  return rows.filter((r) => r.is_spike).map((r) => spikeShape(r.step))
 }
 
 export default function Timeline() {
-  const [globalData, setGlobalData] = useState([])
-  const [layerNames, setLayerNames] = useState([])
+  const { globalData, layerNames } = useRun()
   const [layerGradNorms, setLayerGradNorms] = useState({})
   const [scrubStep, setScrubStep] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
-    Promise.all([fetchGlobal(), fetchLayers(), fetchLayersRanked(8).catch(() => [])])
-      .then(async ([gData, names, ranked]) => {
-        setGlobalData(gData)
-        setLayerNames(names)
-        if (gData.length > 0) setScrubStep(gData[0].step)
+    if (globalData.length > 0) {
+      setScrubStep(globalData[0].step)
+    }
+  }, [globalData])
 
-        // Use top-8 layers by grad variance; fall back to first 8 alphabetical
-        const sample = ranked.length > 0 ? ranked : names.slice(0, 8)
+  useEffect(() => {
+    if (!layerNames.length) {
+      setLoading(false)
+      return
+    }
+
+    let cancelled = false
+    setLoading(true)
+    setError(null)
+
+    async function load() {
+      try {
+        const ranked = await fetchLayersRanked(8).catch(() => [])
+        const sample = ranked.length > 0 ? ranked : layerNames.slice(0, 8)
         const layerDataMap = {}
         await Promise.all(
-          sample.map(async name => {
+          sample.map(async (name) => {
             const rows = await fetchLayer(name)
             layerDataMap[name] = rows
           })
         )
-        setLayerGradNorms(layerDataMap)
-      })
-      .catch(console.error)
-      .finally(() => setLoading(false))
-  }, [])
+        if (!cancelled) setLayerGradNorms(layerDataMap)
+      } catch (err) {
+        if (!cancelled) setError(err?.message || 'Failed to load layer data.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
 
-  const spikeShapes = buildSpikeShapes(globalData)
-  const steps = globalData.map(r => r.step)
-  const losses = globalData.map(r => r.loss)
-  const gradNorms = globalData.map(r => r.grad_norm_before_clip)
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [layerNames])
 
-  const scrubIndex = steps.indexOf(scrubStep)
-  const scrubRow = scrubIndex >= 0 ? globalData[scrubIndex] : null
-  const minStep = steps.length > 0 ? steps[0] : 0
-  const maxStep = steps.length > 0 ? steps[steps.length - 1] : 0
+  const steps = useMemo(() => globalData.map((r) => r.step), [globalData])
+  const losses = useMemo(() => globalData.map((r) => r.loss), [globalData])
+  const gradNorms = useMemo(() => globalData.map((r) => r.grad_norm_before_clip), [globalData])
+  const spikeShapes = useMemo(() => buildSpikeShapes(globalData), [globalData])
+  const scrubShapes = useMemo(
+    () => (scrubStep != null ? [scrubLineShape(scrubStep)] : []),
+    [scrubStep]
+  )
 
-  const scrubLine = scrubStep != null
-    ? [{
-        type: 'line',
-        x0: scrubStep, x1: scrubStep,
-        yref: 'paper', y0: 0, y1: 1,
-        line: { color: '#63b3ed', width: 1.5 },
-      }]
-    : []
+  const scrubRow = useMemo(() => {
+    if (!globalData.length) return null
+    return globalData.find((r) => r.step === scrubStep) || globalData[0]
+  }, [globalData, scrubStep])
 
-  const layerGradTraces = Object.entries(layerGradNorms).map(([name, rows]) => ({
-    x: rows.map(r => r.step),
-    y: rows.map(r => r.grad_l2_norm),
-    type: 'scatter',
-    mode: 'lines',
-    name: name.length > 30 ? '...' + name.slice(-28) : name,
-    line: { width: 1 },
-  }))
+  const layerGradTraces = useMemo(
+    () =>
+      Object.entries(layerGradNorms).map(([name, rows]) => ({
+        x: rows.map((r) => r.step),
+        y: rows.map((r) => r.grad_l2_norm),
+        type: 'scatter',
+        mode: 'lines',
+        name: truncateLayerName(name, 30),
+        line: { width: 1 },
+      })),
+    [layerGradNorms]
+  )
 
   if (loading) {
-    return <div style={{ color: '#718096', padding: '40px', textAlign: 'center' }}>Loading timeline data...</div>
+    return <LoadingSpinner message="Loading timeline data…" />
   }
 
   if (globalData.length === 0) {
-    return <div style={{ color: '#718096', padding: '40px', textAlign: 'center' }}>No global data found. Has a training run completed?</div>
+    return <EmptyState icon="📉">No global data found. Has a training run completed?</EmptyState>
   }
 
   return (
     <div>
-      <Plot
-        data={[{
-          x: steps,
-          y: losses,
-          type: 'scatter',
-          mode: 'lines',
-          name: 'Loss',
-          line: { color: '#63b3ed', width: 1.5 },
-        }]}
+      <ErrorMessage message={error} />
+
+      <Chart
+        data={[
+          {
+            x: steps,
+            y: losses,
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Loss',
+            line: { color: CHART_COLORS.loss, width: 1.5 },
+          },
+        ]}
         layout={{
-          ...DARK_LAYOUT,
           title: { text: 'Training Loss', font: { size: 14 } },
           height: 280,
-          shapes: [...spikeShapes, ...scrubLine],
+          shapes: [...spikeShapes, ...scrubShapes],
         }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: '100%' }}
-        useResizeHandler
       />
 
-      <Plot
-        data={[{
-          x: steps,
-          y: gradNorms,
-          type: 'scatter',
-          mode: 'lines',
-          name: 'Grad Norm',
-          line: { color: '#68d391', width: 1.5 },
-        }]}
+      <Chart
+        data={[
+          {
+            x: steps,
+            y: gradNorms,
+            type: 'scatter',
+            mode: 'lines',
+            name: 'Grad Norm',
+            line: { color: CHART_COLORS.gradNorm, width: 1.5 },
+          },
+        ]}
         layout={{
-          ...DARK_LAYOUT,
           title: { text: 'Global Gradient Norm (before clip)', font: { size: 14 } },
           height: 240,
-          shapes: [...spikeShapes, ...scrubLine],
+          shapes: [...spikeShapes, ...scrubShapes],
         }}
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: '100%' }}
-        useResizeHandler
       />
 
-      <div style={{ margin: '16px 0 8px', display: 'flex', alignItems: 'center', gap: '16px' }}>
-        <label style={{ fontSize: '13px', color: '#718096' }}>Step scrubber:</label>
-        <input
-          type="range"
-          min={minStep}
-          max={maxStep}
-          value={scrubStep}
-          onChange={e => {
-            const target = Number(e.target.value)
-            const closest = steps.reduce((prev, curr) =>
-              Math.abs(curr - target) < Math.abs(prev - target) ? curr : prev
-            , steps[0])
-            setScrubStep(closest)
-          }}
-          style={{ flex: 1 }}
-        />
-        {scrubRow && (
-          <div style={{
-            background: '#1a1f2e',
-            border: '1px solid #2d3748',
-            borderRadius: '6px',
-            padding: '6px 12px',
-            fontSize: '12px',
-            minWidth: '200px',
-          }}>
-            <strong>Step {scrubRow.step}</strong>
-            {' — '}
-            Loss: <span style={{ color: '#63b3ed' }}>{scrubRow.loss?.toFixed(4)}</span>
-            {' | '}
-            Grad: <span style={{ color: '#68d391' }}>{scrubRow.grad_norm_before_clip?.toFixed(4)}</span>
-            {scrubRow.is_spike && <span style={{ color: '#fc8181', marginLeft: 8 }}>SPIKE</span>}
-          </div>
-        )}
-      </div>
+      <StepScrubber steps={steps} value={scrubStep} onChange={setScrubStep} />
+
+      {scrubRow && (
+        <div className="ts-panel" style={{ marginTop: '12px', fontSize: '12px' }}>
+          <strong>Step {scrubRow.step}</strong>
+          {' — '}
+          Loss: <span style={{ color: 'var(--accent)' }}>{scrubRow.loss?.toFixed(4)}</span>
+          {' | '}
+          Grad:{' '}
+          <span style={{ color: 'var(--success)' }}>
+            {scrubRow.grad_norm_before_clip?.toFixed(4)}
+          </span>
+          {scrubRow.is_spike && (
+            <span style={{ color: 'var(--danger)', marginLeft: 8, fontWeight: 600 }}>SPIKE</span>
+          )}
+        </div>
+      )}
 
       {layerGradTraces.length > 0 && (
-        <Plot
+        <Chart
           data={layerGradTraces}
           layout={{
-            ...DARK_LAYOUT,
-            title: { text: 'Per-Layer Gradient Norms (top 8 by grad variance)', font: { size: 14 } },
+            title: {
+              text: 'Per-Layer Gradient Norms (top 8 by grad variance)',
+              font: { size: 14 },
+            },
             height: 300,
             showlegend: true,
             legend: { font: { size: 10 } },
-            shapes: scrubLine,
+            shapes: scrubShapes,
           }}
-          config={{ displayModeBar: false, responsive: true }}
-          style={{ width: '100%' }}
-          useResizeHandler
         />
       )}
     </div>
