@@ -1,23 +1,11 @@
-import { COLORS } from '../theme.js'
-
-/**
- * Consistent placeholder for empty datasets.
- */
 export default function EmptyState({ children, icon = '—' }) {
   return (
     <div
-      style={{
-        padding: '40px',
-        textAlign: 'center',
-        color: COLORS.muted,
-        background: COLORS.panel,
-        border: `1px dashed ${COLORS.border}`,
-        borderRadius: '6px',
-      }}
+      className="rounded-lg border border-dashed border-border bg-panel p-10 text-center text-sm text-muted"
       role="status"
     >
-      <div style={{ fontSize: '24px', marginBottom: '8px' }}>{icon}</div>
-      <div style={{ fontSize: '14px' }}>{children}</div>
+      <div className="mb-2 text-2xl">{icon}</div>
+      <div>{children}</div>
     </div>
   )
 }

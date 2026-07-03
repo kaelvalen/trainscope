@@ -4,35 +4,57 @@ import { fetchLayersRanked, fetchLayer } from '../api.js'
 import { spikeShape, scrubLineShape, truncateLayerName, CHART_COLORS } from '../theme.js'
 import Chart from '../components/Chart.jsx'
 import StepScrubber from '../components/StepScrubber.jsx'
-import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
+import { Skeleton } from '../components/ui/Skeleton.jsx'
+import { StatCard } from '../components/ui/StatCard.jsx'
+import { Card, CardContent } from '../components/ui/Card.jsx'
+import { Activity, TrendingDown, Activity as Pulse, Zap } from 'lucide-react'
 
-function buildSpikeShapes(rows) {
-  return rows.filter((r) => r.is_spike).map((r) => spikeShape(r.step))
+function buildSpikeAnnotations(rows) {
+  return rows
+    .filter((r) => r.is_spike)
+    .map((r) => ({
+      x: r.step,
+      y: 1,
+      xref: 'x',
+      yref: 'paper',
+      text: 'spike',
+      showarrow: false,
+      font: { color: CHART_COLORS.spike, size: 10 },
+      yanchor: 'top',
+    }))
+}
+
+function buildZoomLayout(extra = {}) {
+  return {
+    dragmode: 'zoom',
+    xaxis: { rangeslider: { visible: false }, ...extra.xaxis },
+    ...extra,
+  }
 }
 
 export default function Timeline() {
   const { globalData, layerNames } = useRun()
   const [layerGradNorms, setLayerGradNorms] = useState({})
   const [scrubStep, setScrubStep] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [layerLoading, setLayerLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     if (globalData.length > 0) {
-      setScrubStep(globalData[0].step)
+      setScrubStep(globalData[globalData.length - 1].step)
     }
   }, [globalData])
 
   useEffect(() => {
     if (!layerNames.length) {
-      setLoading(false)
+      setLayerLoading(false)
       return
     }
 
     let cancelled = false
-    setLoading(true)
+    setLayerLoading(true)
     setError(null)
 
     async function load() {
@@ -50,7 +72,7 @@ export default function Timeline() {
       } catch (err) {
         if (!cancelled) setError(err?.message || 'Failed to load layer data.')
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setLayerLoading(false)
       }
     }
 
@@ -63,11 +85,18 @@ export default function Timeline() {
   const steps = useMemo(() => globalData.map((r) => r.step), [globalData])
   const losses = useMemo(() => globalData.map((r) => r.loss), [globalData])
   const gradNorms = useMemo(() => globalData.map((r) => r.grad_norm_before_clip), [globalData])
-  const spikeShapes = useMemo(() => buildSpikeShapes(globalData), [globalData])
+  const spikeShapes = useMemo(() => {
+    const shapes = globalData.filter((r) => r.is_spike).map((r) => spikeShape(r.step))
+    return shapes
+  }, [globalData])
+  const spikeAnnotations = useMemo(() => buildSpikeAnnotations(globalData), [globalData])
   const scrubShapes = useMemo(
     () => (scrubStep != null ? [scrubLineShape(scrubStep)] : []),
     [scrubStep]
   )
+
+  const latestRow = globalData[globalData.length - 1] || null
+  const spikeCount = useMemo(() => globalData.filter((r) => r.is_spike).length, [globalData])
 
   const scrubRow = useMemo(() => {
     if (!globalData.length) return null
@@ -87,16 +116,32 @@ export default function Timeline() {
     [layerGradNorms]
   )
 
-  if (loading) {
-    return <LoadingSpinner message="Loading timeline data…" />
-  }
-
   if (globalData.length === 0) {
     return <EmptyState icon="📉">No global data found. Has a training run completed?</EmptyState>
   }
 
   return (
-    <div>
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Steps"
+          value={globalData.length}
+          subtitle={latestRow ? `up to step ${latestRow.step}` : ''}
+          icon={Activity}
+        />
+        <StatCard
+          label="Latest Loss"
+          value={latestRow?.loss?.toFixed(4) ?? '—'}
+          icon={TrendingDown}
+        />
+        <StatCard
+          label="Latest Grad Norm"
+          value={latestRow?.grad_norm_before_clip?.toFixed(4) ?? '—'}
+          icon={Pulse}
+        />
+        <StatCard label="Spikes" value={spikeCount} icon={Zap} />
+      </div>
+
       <ErrorMessage message={error} />
 
       <Chart
@@ -110,11 +155,14 @@ export default function Timeline() {
             line: { color: CHART_COLORS.loss, width: 1.5 },
           },
         ]}
-        layout={{
+        layout={buildZoomLayout({
           title: { text: 'Training Loss', font: { size: 14 } },
-          height: 280,
+          height: 320,
           shapes: [...spikeShapes, ...scrubShapes],
-        }}
+          annotations: spikeAnnotations,
+          uirevision: 'timeline-loss',
+        })}
+        config={{ scrollZoom: true }}
       />
 
       <Chart
@@ -128,46 +176,49 @@ export default function Timeline() {
             line: { color: CHART_COLORS.gradNorm, width: 1.5 },
           },
         ]}
-        layout={{
+        layout={buildZoomLayout({
           title: { text: 'Global Gradient Norm (before clip)', font: { size: 14 } },
-          height: 240,
+          height: 280,
           shapes: [...spikeShapes, ...scrubShapes],
-        }}
+          uirevision: 'timeline-grad',
+        })}
+        config={{ scrollZoom: true }}
       />
 
       <StepScrubber steps={steps} value={scrubStep} onChange={setScrubStep} />
 
       {scrubRow && (
-        <div className="ts-panel" style={{ marginTop: '12px', fontSize: '12px' }}>
-          <strong>Step {scrubRow.step}</strong>
-          {' — '}
-          Loss: <span style={{ color: 'var(--accent)' }}>{scrubRow.loss?.toFixed(4)}</span>
-          {' | '}
-          Grad:{' '}
-          <span style={{ color: 'var(--success)' }}>
-            {scrubRow.grad_norm_before_clip?.toFixed(4)}
-          </span>
-          {scrubRow.is_spike && (
-            <span style={{ color: 'var(--danger)', marginLeft: 8, fontWeight: 600 }}>SPIKE</span>
-          )}
-        </div>
+        <Card>
+          <CardContent className="text-sm">
+            <strong className="text-foreground">Step {scrubRow.step}</strong>
+            {' — '}
+            Loss: <span className="text-accent">{scrubRow.loss?.toFixed(4)}</span>
+            {' | '}
+            Grad: <span className="text-success">{scrubRow.grad_norm_before_clip?.toFixed(4)}</span>
+            {scrubRow.is_spike && <span className="ml-2 font-semibold text-danger">SPIKE</span>}
+          </CardContent>
+        </Card>
       )}
 
-      {layerGradTraces.length > 0 && (
+      {layerLoading ? (
+        <Skeleton className="h-72" />
+      ) : layerGradTraces.length > 0 ? (
         <Chart
           data={layerGradTraces}
-          layout={{
+          layout={buildZoomLayout({
             title: {
               text: 'Per-Layer Gradient Norms (top 8 by grad variance)',
               font: { size: 14 },
             },
-            height: 300,
+            height: 340,
             showlegend: true,
             legend: { font: { size: 10 } },
             shapes: scrubShapes,
-          }}
+            uirevision: 'timeline-layers',
+          })}
+          config={{ scrollZoom: true }}
         />
-      )}
+      ) : null}
     </div>
   )
 }

@@ -4,10 +4,11 @@ import Timeline from './views/Timeline.jsx'
 import LayerDrilldown from './views/LayerDrilldown.jsx'
 import DiffView from './views/DiffView.jsx'
 import SpikeInspector from './views/SpikeInspector.jsx'
-import LoadingSpinner from './components/LoadingSpinner.jsx'
 import ErrorMessage from './components/ErrorMessage.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
-import KeyboardShortcutsHelp from './components/KeyboardShortcutsHelp.jsx'
+import { Navbar } from './components/ui/Navbar.jsx'
+import { Sidebar } from './components/ui/Sidebar.jsx'
+import { Skeleton } from './components/ui/Skeleton.jsx'
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js'
 
 const TABS = [
@@ -17,9 +18,26 @@ const TABS = [
   { label: 'Spike Inspector', shortcut: '4', component: SpikeInspector },
 ]
 
+function LoadingSkeleton() {
+  return (
+    <div className="space-y-4">
+      <Skeleton className="h-8 w-48" />
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <Skeleton className="h-24" />
+        <Skeleton className="h-24" />
+        <Skeleton className="h-24" />
+        <Skeleton className="h-24" />
+      </div>
+      <Skeleton className="h-64" />
+      <Skeleton className="h-64" />
+    </div>
+  )
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState(0)
-  const { meta, spikes, loading, error, refresh, isReady } = useRun()
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const { meta, spikes, loading, error, refresh, isReady, liveStatus } = useRun()
 
   useKeyboardShortcuts(
     {
@@ -29,59 +47,40 @@ export default function App() {
       4: () => setActiveTab(3),
       ArrowLeft: () => setActiveTab((i) => Math.max(0, i - 1)),
       ArrowRight: () => setActiveTab((i) => Math.min(TABS.length - 1, i + 1)),
+      r: () => refresh(),
     },
-    []
+    [refresh]
   )
 
   const ActiveComponent = TABS[activeTab].component
-  const spikeCount = spikes.length
 
   return (
-    <div className="ts-app">
-      <header className="ts-header">
-        <span className="ts-title">TrainScope</span>
-        {meta && (
-          <span className="ts-meta">
-            Run:{' '}
-            <strong style={{ color: 'var(--text)' }}>
-              {meta.trainscope_config?.run_name || '—'}
-            </strong>
-          </span>
-        )}
-        {spikeCount > 0 && (
-          <span className="ts-spike-tag">
-            {spikeCount} spike{spikeCount !== 1 ? 's' : ''}
-          </span>
-        )}
-        <div className="ts-header-actions">
-          <KeyboardShortcutsHelp />
-        </div>
-      </header>
+    <div className="flex h-screen bg-background text-foreground">
+      <Sidebar
+        activeIndex={activeTab}
+        onChange={setActiveTab}
+        mobileOpen={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+      />
 
-      <nav className="ts-tabs" role="tablist" aria-label="View tabs">
-        {TABS.map((tab, i) => (
-          <button
-            key={tab.label}
-            role="tab"
-            aria-selected={activeTab === i}
-            className={`ts-tab ${activeTab === i ? 'ts-tab-active' : ''}`}
-            onClick={() => setActiveTab(i)}
-            title={`${tab.label} (press ${tab.shortcut})`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </nav>
+      <div className="flex min-w-0 flex-1 flex-col">
+        <Navbar
+          runName={meta?.trainscope_config?.run_name}
+          spikeCount={spikes.length}
+          liveStatus={liveStatus}
+          onMenuClick={() => setMobileOpen(true)}
+        />
 
-      <main className="ts-content">
-        {loading && <LoadingSpinner message="Loading run data…" />}
-        {!loading && error && <ErrorMessage message={error} onRetry={refresh} />}
-        {!loading && !error && isReady && (
-          <ErrorBoundary>
-            <ActiveComponent />
-          </ErrorBoundary>
-        )}
-      </main>
+        <main className="flex-1 overflow-auto p-4 lg:p-6">
+          {loading && <LoadingSkeleton />}
+          {!loading && error && <ErrorMessage message={error} onRetry={refresh} />}
+          {!loading && !error && isReady && (
+            <ErrorBoundary>
+              <ActiveComponent />
+            </ErrorBoundary>
+          )}
+        </main>
+      </div>
     </div>
   )
 }

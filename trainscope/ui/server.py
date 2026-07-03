@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import math
@@ -11,13 +12,15 @@ from urllib.parse import quote, unquote
 
 import anyio
 import pyarrow.ipc as ipc
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("trainscope")
+
+LIVE_RUN_THRESHOLD_SECONDS = 10.0
 
 
 def _encode_layer_name(name: str) -> str:
@@ -100,6 +103,52 @@ async def _read_json(path: Path) -> Any:
     except Exception as exc:
         logger.exception("Failed to parse JSON file %s", path)
         raise HTTPException(status_code=500, detail=f"Invalid JSON in {path.name}") from exc
+
+
+async def _read_json_optional(path: Path) -> Any:
+    """Read JSON without raising HTTP exceptions (used by WebSocket)."""
+    if not await anyio.to_thread.run_sync(path.exists):
+        return None
+    try:
+        return await _read_json(path)
+    except Exception:
+        logger.exception("Failed to read optional JSON file %s", path)
+        return None
+
+
+async def _get_spike_steps(run_path: Path) -> set[int]:
+    spikes_dir = run_path / "spikes"
+    if not await anyio.to_thread.run_sync(spikes_dir.exists):
+        return set()
+    files = await anyio.to_thread.run_sync(
+        lambda: sorted(spikes_dir.glob("spike_step_*.arrow"))
+    )
+    steps: set[int] = set()
+    for f in files:
+        match = re.search(r"spike_step_(\d+)\.arrow", f.name)
+        if match:
+            steps.add(int(match.group(1)))
+    return steps
+
+
+async def _get_layers(run_path: Path) -> list[str]:
+    layers_dir = run_path / "layers"
+    if not await anyio.to_thread.run_sync(layers_dir.exists):
+        return []
+    files = await anyio.to_thread.run_sync(lambda: sorted(layers_dir.glob("*.arrow")))
+    return [_decode_layer_name(f.name) for f in files]
+
+
+async def _is_live_run(run_path: Path) -> bool:
+    """A run is considered live if its global.arrow was written recently."""
+    global_path = run_path / "global.arrow"
+    if not await anyio.to_thread.run_sync(global_path.exists):
+        return False
+    try:
+        mtime = await anyio.to_thread.run_sync(lambda: global_path.stat().st_mtime)
+    except Exception:
+        return False
+    return (time.time() - mtime) < LIVE_RUN_THRESHOLD_SECONDS
 
 
 class _TTLCache:
@@ -204,11 +253,7 @@ def create_app(run_path: str) -> FastAPI:
 
     @app.get("/api/layers")
     async def get_layers() -> list[str]:
-        layers_dir = rp / "layers"
-        if not await anyio.to_thread.run_sync(layers_dir.exists):
-            return []
-        files = await anyio.to_thread.run_sync(lambda: sorted(layers_dir.glob("*.arrow")))
-        return [_decode_layer_name(f.name) for f in files]
+        return await _get_layers(rp)
 
     @app.get("/api/layers/ranked")
     async def get_layers_ranked(
@@ -242,18 +287,8 @@ def create_app(run_path: str) -> FastAPI:
 
     @app.get("/api/spikes")
     async def get_spikes() -> list[dict[str, Any]]:
-        spikes_dir = rp / "spikes"
-        if not await anyio.to_thread.run_sync(spikes_dir.exists):
-            return []
-        files = await anyio.to_thread.run_sync(
-            lambda: sorted(spikes_dir.glob("spike_step_*.arrow"))
-        )
-        result = []
-        for f in files:
-            match = re.search(r"spike_step_(\d+)\.arrow", f.name)
-            if match:
-                result.append({"step": int(match.group(1)), "file": f.name})
-        return result
+        steps = await _get_spike_steps(rp)
+        return [{"step": step, "file": f"spike_step_{step}.arrow"} for step in sorted(steps)]
 
     @app.get("/api/spikes/{step}")
     async def get_spike(step: int) -> list[dict]:
@@ -316,6 +351,76 @@ def create_app(run_path: str) -> FastAPI:
             )
         result.sort(key=lambda x: x["kl_divergence"], reverse=True)
         return result
+
+    # ------------------------------------------------------------------ #
+    # WebSocket streaming
+    # ------------------------------------------------------------------ #
+    @app.websocket("/ws")
+    async def websocket_endpoint(websocket: WebSocket):
+        await websocket.accept()
+        try:
+            meta = await _read_json_optional(rp / "meta.json") or {}
+            manifest = await _read_json_optional(rp / "manifest.json") or {}
+            await websocket.send_json(
+                {
+                    "type": "meta",
+                    "payload": {
+                        "run_path": str(rp),
+                        **meta,
+                        "manifest": manifest,
+                    },
+                }
+            )
+
+            if await _is_live_run(rp):
+                last_global_len = 0
+                last_spikes: set[int] = set()
+                last_layers: set[str] = set()
+                while True:
+                    global_rows = await _read_arrow(rp / "global.arrow")
+                    if len(global_rows) > last_global_len:
+                        await websocket.send_json(
+                            {"type": "global", "payload": global_rows}
+                        )
+                        last_global_len = len(global_rows)
+
+                    spikes = await _get_spike_steps(rp)
+                    new_spikes = spikes - last_spikes
+                    if new_spikes:
+                        for step in sorted(new_spikes):
+                            await websocket.send_json(
+                                {"type": "spike", "payload": {"step": step}}
+                            )
+                        last_spikes = spikes
+
+                    layers = set(await _get_layers(rp))
+                    if layers != last_layers:
+                        await websocket.send_json(
+                            {"type": "layers", "payload": sorted(layers)}
+                        )
+                        last_layers = layers
+
+                    await asyncio.sleep(1.0)
+            else:
+                global_rows = await _read_arrow(rp / "global.arrow")
+                await websocket.send_json({"type": "global", "payload": global_rows})
+
+                spikes = [{"step": step} for step in await _get_spike_steps(rp)]
+                await websocket.send_json({"type": "spike", "payload": spikes})
+
+                layers = await _get_layers(rp)
+                await websocket.send_json({"type": "layers", "payload": layers})
+
+                while True:
+                    await asyncio.sleep(5.0)
+                    await websocket.send_json(
+                        {"type": "heartbeat", "payload": {"time": time.time()}}
+                    )
+        except WebSocketDisconnect:
+            logger.debug("WebSocket client disconnected from %s", rp)
+        except Exception:
+            logger.exception("WebSocket error for run %s", rp)
+            await websocket.close(code=1011)
 
     if (static_dir / "index.html").exists():
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")

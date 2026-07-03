@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import pickle
 import time
@@ -12,6 +13,8 @@ import pyarrow.ipc as ipc
 import torch
 
 from trainscope.core.config import TrainScopeConfig
+
+logger = logging.getLogger("trainscope")
 
 GLOBAL_SCHEMA = pa.schema(
     [
@@ -53,7 +56,106 @@ LAYER_SCHEMA = pa.schema(
     ]
 )
 
+PLUGIN_METRICS_SCHEMA = pa.schema(
+    [
+        pa.field("step", pa.int64()),
+        pa.field("plugin", pa.string()),
+        pa.field("metric", pa.string()),
+        pa.field("value", pa.float64()),
+    ]
+)
+
 FLUSH_INTERVAL = 100
+
+
+def _make_global_batch(rows: list[dict]) -> pa.RecordBatch:
+    return pa.record_batch(
+        {
+            "step": pa.array([r.get("step", 0) for r in rows], type=pa.int64()),
+            "loss": pa.array([r.get("loss", 0.0) for r in rows], type=pa.float64()),
+            "grad_norm_before_clip": pa.array(
+                [r.get("grad_norm_before_clip", 0.0) for r in rows], type=pa.float64()
+            ),
+            "grad_norm_after_clip": pa.array(
+                [r.get("grad_norm_after_clip", 0.0) for r in rows], type=pa.float64()
+            ),
+            "lr": pa.array([r.get("lr", 0.0) for r in rows], type=pa.float64()),
+            "optimizer_v_norm": pa.array(
+                [r.get("optimizer_v_norm", 0.0) for r in rows], type=pa.float64()
+            ),
+            "step_time_ms": pa.array(
+                [r.get("step_time_ms", 0.0) for r in rows], type=pa.float64()
+            ),
+            "batch_index": pa.array([r.get("batch_index", -1) for r in rows], type=pa.int64()),
+            "is_spike": pa.array([r.get("is_spike", False) for r in rows], type=pa.bool_()),
+            "cpu_memory_mb": pa.array(
+                [r.get("cpu_memory_mb", 0.0) for r in rows], type=pa.float64()
+            ),
+            "cuda_memory_mb": pa.array(
+                [r.get("cuda_memory_mb", 0.0) for r in rows], type=pa.float64()
+            ),
+        },
+        schema=GLOBAL_SCHEMA,
+    )
+
+
+def _make_layer_batch(rows: list[dict]) -> pa.RecordBatch:
+    return pa.record_batch(
+        {
+            "step": pa.array([r.get("step", 0) for r in rows], type=pa.int64()),
+            "grad_l2_norm": pa.array(
+                [r.get("grad_l2_norm", 0.0) for r in rows], type=pa.float64()
+            ),
+            "weight_l2_norm": pa.array(
+                [r.get("weight_l2_norm", 0.0) for r in rows], type=pa.float64()
+            ),
+            "act_mean": pa.array([r.get("act_mean", 0.0) for r in rows], type=pa.float64()),
+            "act_std": pa.array([r.get("act_std", 0.0) for r in rows], type=pa.float64()),
+            "act_max_abs": pa.array(
+                [r.get("act_max_abs", 0.0) for r in rows], type=pa.float64()
+            ),
+            "act_kurtosis": pa.array(
+                [r.get("act_kurtosis", 0.0) for r in rows], type=pa.float64()
+            ),
+            "grad_nan_inf_ratio": pa.array(
+                [r.get("grad_nan_inf_ratio", 0.0) for r in rows], type=pa.float64()
+            ),
+            "hist_counts": pa.array(
+                [r.get("hist_counts", []) for r in rows], type=pa.list_(pa.float64())
+            ),
+            "hist_edges": pa.array(
+                [r.get("hist_edges", []) for r in rows], type=pa.list_(pa.float64())
+            ),
+            "grad_max_abs": pa.array(
+                [r.get("grad_max_abs", 0.0) for r in rows], type=pa.float64()
+            ),
+            "grad_mean": pa.array([r.get("grad_mean", 0.0) for r in rows], type=pa.float64()),
+            "weight_mean": pa.array(
+                [r.get("weight_mean", 0.0) for r in rows], type=pa.float64()
+            ),
+            "weight_std": pa.array([r.get("weight_std", 0.0) for r in rows], type=pa.float64()),
+            "weight_max_abs": pa.array(
+                [r.get("weight_max_abs", 0.0) for r in rows], type=pa.float64()
+            ),
+            "weight_min": pa.array([r.get("weight_min", 0.0) for r in rows], type=pa.float64()),
+            "act_min": pa.array([r.get("act_min", 0.0) for r in rows], type=pa.float64()),
+            "act_max": pa.array([r.get("act_max", 0.0) for r in rows], type=pa.float64()),
+            "act_median": pa.array([r.get("act_median", 0.0) for r in rows], type=pa.float64()),
+        },
+        schema=LAYER_SCHEMA,
+    )
+
+
+def _make_plugin_metrics_batch(rows: list[dict]) -> pa.RecordBatch:
+    return pa.record_batch(
+        {
+            "step": pa.array([r.get("step", 0) for r in rows], type=pa.int64()),
+            "plugin": pa.array([r.get("plugin", "") for r in rows], type=pa.string()),
+            "metric": pa.array([r.get("metric", "") for r in rows], type=pa.string()),
+            "value": pa.array([r.get("value", 0.0) for r in rows], type=pa.float64()),
+        },
+        schema=PLUGIN_METRICS_SCHEMA,
+    )
 
 
 class DiskWriter:
@@ -86,9 +188,11 @@ class DiskWriter:
 
         self._global_buffer: list[dict] = []
         self._layer_buffers: dict[str, list[dict]] = {}
+        self._plugin_metrics_buffer: list[dict] = []
 
         self._global_writer: ipc.RecordBatchFileWriter | None = None
         self._layer_writers: dict[str, ipc.RecordBatchFileWriter] = {}
+        self._plugin_metrics_writer: ipc.RecordBatchFileWriter | None = None
         self._closed = False
 
         # Resume state. If resuming, existing rows are kept in memory and flushed
@@ -96,6 +200,7 @@ class DiskWriter:
         self._resume = False
         self._resume_global_rows: list[dict] = []
         self._resume_layer_rows: dict[str, list[dict]] = {}
+        self._resume_plugin_metrics_rows: list[dict] = []
         # Total number of global rows persisted (including rows loaded for resume).
         self._n_global_rows = 0
         # Highest step number seen via append_global (or loaded for resume).
@@ -131,6 +236,9 @@ class DiskWriter:
         encoded = self._encode_layer_name(layer_name)
         return self._run_path / "layers" / f"{encoded}.arrow"
 
+    def _plugin_metrics_path(self) -> Path:
+        return self._run_path / "plugin_metrics.arrow"
+
     # --------------------------------------------------------------------- #
     # Resume support
     # --------------------------------------------------------------------- #
@@ -150,7 +258,7 @@ class DiskWriter:
                     self._last_step = self._resume_global_rows[-1].get("step")
                 self._resume = True
             except Exception:
-                # If the existing file is corrupt, fall back to overwrite.
+                logger.exception("Failed to resume global.arrow, falling back to overwrite")
                 self._resume_global_rows = []
 
         layers_dir = self._run_path / "layers"
@@ -166,7 +274,20 @@ class DiskWriter:
                     self._layer_files.add(layer_name)
                     self._resume = True
                 except Exception:
-                    pass
+                    logger.exception("Failed to resume layer file %s", path)
+
+        plugin_metrics_path = self._plugin_metrics_path()
+        if plugin_metrics_path.exists():
+            try:
+                with ipc.open_file(str(plugin_metrics_path)) as reader:
+                    table = reader.read_all()
+                pydict = table.to_pydict()
+                self._resume_plugin_metrics_rows = [
+                    dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())
+                ]
+                self._resume = True
+            except Exception:
+                logger.exception("Failed to resume plugin_metrics.arrow")
 
     # --------------------------------------------------------------------- #
     # Metadata
@@ -180,6 +301,7 @@ class DiskWriter:
         }
         with open(self._run_path / "meta.json", "w") as f:
             json.dump(meta, f, indent=2)
+        logger.debug("Wrote meta.json for run %s", self._run_path.name)
 
     def _write_manifest(self):
         last_step = self._last_step
@@ -192,6 +314,8 @@ class DiskWriter:
             "last_step": last_step,
             "n_global_rows": self._n_global_rows + len(self._global_buffer),
             "layer_files": layer_files,
+            "n_plugin_metric_rows": len(self._resume_plugin_metrics_rows)
+            + len(self._plugin_metrics_buffer),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         with open(self._run_path / "manifest.json", "w") as f:
@@ -213,6 +337,13 @@ class DiskWriter:
             sink = pa.OSFile(str(path), "wb")
             self._layer_writers[layer_name] = ipc.new_file(sink, LAYER_SCHEMA)
         return self._layer_writers[layer_name]
+
+    def _get_plugin_metrics_writer(self) -> ipc.RecordBatchFileWriter:
+        if self._plugin_metrics_writer is None:
+            path = self._plugin_metrics_path()
+            sink = pa.OSFile(str(path), "wb")
+            self._plugin_metrics_writer = ipc.new_file(sink, PLUGIN_METRICS_SCHEMA)
+        return self._plugin_metrics_writer
 
     # --------------------------------------------------------------------- #
     # Public append API
@@ -236,6 +367,26 @@ class DiskWriter:
         if len(self._layer_buffers[layer_name]) >= FLUSH_INTERVAL:
             self._flush_layer(layer_name)
 
+    def append_plugin_metrics(self, step: int, plugin_name: str, metrics: dict[str, float]):
+        """Append per-step metrics emitted by a :class:`MetricPlugin`.
+
+        Each metric is stored as a separate row so the schema stays simple and
+        new metrics can be added without schema changes.
+        """
+        if self._closed:
+            raise RuntimeError("DiskWriter is closed")
+        for metric_name, value in metrics.items():
+            self._plugin_metrics_buffer.append(
+                {
+                    "step": step,
+                    "plugin": plugin_name,
+                    "metric": metric_name,
+                    "value": float(value),
+                }
+            )
+        if len(self._plugin_metrics_buffer) >= FLUSH_INTERVAL:
+            self._flush_plugin_metrics()
+
     # --------------------------------------------------------------------- #
     # Flush logic
     # --------------------------------------------------------------------- #
@@ -252,7 +403,7 @@ class DiskWriter:
             return
 
         n = len(self._global_buffer)
-        self._get_global_writer().write_batch(self._make_global_batch(self._global_buffer))
+        self._get_global_writer().write_batch(_make_global_batch(self._global_buffer))
         self._global_buffer = []
         self._n_global_rows += n
 
@@ -268,16 +419,32 @@ class DiskWriter:
             del self._layer_buffers[layer_name]
             return
 
-        self._get_layer_writer(layer_name).write_batch(self._make_layer_batch(rows))
+        self._get_layer_writer(layer_name).write_batch(_make_layer_batch(rows))
         self._layer_files.add(layer_name)
         self._layer_buffers[layer_name] = []
+
+    def _flush_plugin_metrics(self):
+        if not self._plugin_metrics_buffer:
+            return
+
+        if self._resume:
+            rows = self._resume_plugin_metrics_rows + self._plugin_metrics_buffer
+            self._atomic_rewrite_plugin_metrics(rows)
+            self._resume_plugin_metrics_rows = rows
+            self._plugin_metrics_buffer = []
+            return
+
+        self._get_plugin_metrics_writer().write_batch(
+            _make_plugin_metrics_batch(self._plugin_metrics_buffer)
+        )
+        self._plugin_metrics_buffer = []
 
     def _atomic_rewrite_global(self, rows: list[dict]):
         path = self._global_path()
         tmp_path = path.with_suffix(".arrow.tmp")
         with pa.OSFile(str(tmp_path), "wb") as sink:
             writer = ipc.new_file(sink, GLOBAL_SCHEMA)
-            writer.write_batch(self._make_global_batch(rows))
+            writer.write_batch(_make_global_batch(rows))
             writer.close()
         os.replace(str(tmp_path), str(path))
 
@@ -286,89 +453,31 @@ class DiskWriter:
         tmp_path = path.with_suffix(".arrow.tmp")
         with pa.OSFile(str(tmp_path), "wb") as sink:
             writer = ipc.new_file(sink, LAYER_SCHEMA)
-            writer.write_batch(self._make_layer_batch(rows))
+            writer.write_batch(_make_layer_batch(rows))
             writer.close()
         os.replace(str(tmp_path), str(path))
         self._layer_files.add(layer_name)
+
+    def _atomic_rewrite_plugin_metrics(self, rows: list[dict]):
+        path = self._plugin_metrics_path()
+        tmp_path = path.with_suffix(".arrow.tmp")
+        with pa.OSFile(str(tmp_path), "wb") as sink:
+            writer = ipc.new_file(sink, PLUGIN_METRICS_SCHEMA)
+            writer.write_batch(_make_plugin_metrics_batch(rows))
+            writer.close()
+        os.replace(str(tmp_path), str(path))
 
     # --------------------------------------------------------------------- #
     # Batch builders
     # --------------------------------------------------------------------- #
     def _make_global_batch(self, rows: list[dict]) -> pa.RecordBatch:
-        return pa.record_batch(
-            {
-                "step": pa.array([r.get("step", 0) for r in rows], type=pa.int64()),
-                "loss": pa.array([r.get("loss", 0.0) for r in rows], type=pa.float64()),
-                "grad_norm_before_clip": pa.array(
-                    [r.get("grad_norm_before_clip", 0.0) for r in rows], type=pa.float64()
-                ),
-                "grad_norm_after_clip": pa.array(
-                    [r.get("grad_norm_after_clip", 0.0) for r in rows], type=pa.float64()
-                ),
-                "lr": pa.array([r.get("lr", 0.0) for r in rows], type=pa.float64()),
-                "optimizer_v_norm": pa.array(
-                    [r.get("optimizer_v_norm", 0.0) for r in rows], type=pa.float64()
-                ),
-                "step_time_ms": pa.array(
-                    [r.get("step_time_ms", 0.0) for r in rows], type=pa.float64()
-                ),
-                "batch_index": pa.array([r.get("batch_index", -1) for r in rows], type=pa.int64()),
-                "is_spike": pa.array([r.get("is_spike", False) for r in rows], type=pa.bool_()),
-                "cpu_memory_mb": pa.array(
-                    [r.get("cpu_memory_mb", 0.0) for r in rows], type=pa.float64()
-                ),
-                "cuda_memory_mb": pa.array(
-                    [r.get("cuda_memory_mb", 0.0) for r in rows], type=pa.float64()
-                ),
-            },
-            schema=GLOBAL_SCHEMA,
-        )
+        return _make_global_batch(rows)
 
     def _make_layer_batch(self, rows: list[dict]) -> pa.RecordBatch:
-        return pa.record_batch(
-            {
-                "step": pa.array([r.get("step", 0) for r in rows], type=pa.int64()),
-                "grad_l2_norm": pa.array(
-                    [r.get("grad_l2_norm", 0.0) for r in rows], type=pa.float64()
-                ),
-                "weight_l2_norm": pa.array(
-                    [r.get("weight_l2_norm", 0.0) for r in rows], type=pa.float64()
-                ),
-                "act_mean": pa.array([r.get("act_mean", 0.0) for r in rows], type=pa.float64()),
-                "act_std": pa.array([r.get("act_std", 0.0) for r in rows], type=pa.float64()),
-                "act_max_abs": pa.array(
-                    [r.get("act_max_abs", 0.0) for r in rows], type=pa.float64()
-                ),
-                "act_kurtosis": pa.array(
-                    [r.get("act_kurtosis", 0.0) for r in rows], type=pa.float64()
-                ),
-                "grad_nan_inf_ratio": pa.array(
-                    [r.get("grad_nan_inf_ratio", 0.0) for r in rows], type=pa.float64()
-                ),
-                "hist_counts": pa.array(
-                    [r.get("hist_counts", []) for r in rows], type=pa.list_(pa.float64())
-                ),
-                "hist_edges": pa.array(
-                    [r.get("hist_edges", []) for r in rows], type=pa.list_(pa.float64())
-                ),
-                "grad_max_abs": pa.array(
-                    [r.get("grad_max_abs", 0.0) for r in rows], type=pa.float64()
-                ),
-                "grad_mean": pa.array([r.get("grad_mean", 0.0) for r in rows], type=pa.float64()),
-                "weight_mean": pa.array(
-                    [r.get("weight_mean", 0.0) for r in rows], type=pa.float64()
-                ),
-                "weight_std": pa.array([r.get("weight_std", 0.0) for r in rows], type=pa.float64()),
-                "weight_max_abs": pa.array(
-                    [r.get("weight_max_abs", 0.0) for r in rows], type=pa.float64()
-                ),
-                "weight_min": pa.array([r.get("weight_min", 0.0) for r in rows], type=pa.float64()),
-                "act_min": pa.array([r.get("act_min", 0.0) for r in rows], type=pa.float64()),
-                "act_max": pa.array([r.get("act_max", 0.0) for r in rows], type=pa.float64()),
-                "act_median": pa.array([r.get("act_median", 0.0) for r in rows], type=pa.float64()),
-            },
-            schema=LAYER_SCHEMA,
-        )
+        return _make_layer_batch(rows)
+
+    def _make_plugin_metrics_batch(self, rows: list[dict]) -> pa.RecordBatch:
+        return _make_plugin_metrics_batch(rows)
 
     # --------------------------------------------------------------------- #
     # Spike windows
@@ -387,7 +496,7 @@ class DiskWriter:
             path = spike_dir / f"spike_step_{spike_step}.arrow"
             with pa.OSFile(str(path), "wb") as sink:
                 w = ipc.new_file(sink, GLOBAL_SCHEMA)
-                w.write_batch(self._make_global_batch(global_rows))
+                w.write_batch(_make_global_batch(global_rows))
                 w.close()
 
         if layer_windows:
@@ -400,8 +509,10 @@ class DiskWriter:
                 path = layers_dir / f"{encoded}.arrow"
                 with pa.OSFile(str(path), "wb") as sink:
                     w = ipc.new_file(sink, LAYER_SCHEMA)
-                    w.write_batch(self._make_layer_batch(rows))
+                    w.write_batch(_make_layer_batch(rows))
                     w.close()
+
+        logger.debug("Wrote spike window for step %d", spike_step)
 
     # --------------------------------------------------------------------- #
     # Checkpoints / RNG state
@@ -419,6 +530,7 @@ class DiskWriter:
             payload["optimizer_state_dict"] = optimizer_state
         path = ckpt_dir / f"{step}.pt"
         torch.save(payload, path)
+        logger.debug("Saved checkpoint for step %d", step)
 
     def save_rng_state(self, step: int):
         state = {
@@ -430,6 +542,7 @@ class DiskWriter:
         path = self._run_path / "rng_states" / f"step_{step}.pkl"
         with open(path, "wb") as f:
             pickle.dump(state, f)
+        logger.debug("Saved RNG state for step %d", step)
 
     # --------------------------------------------------------------------- #
     # Lifecycle
@@ -453,12 +566,19 @@ class DiskWriter:
                 self._atomic_rewrite_layer(layer_name, combined)
                 self._resume_layer_rows[layer_name] = combined
                 del self._layer_buffers[layer_name]
+            if self._plugin_metrics_buffer:
+                rows = self._resume_plugin_metrics_rows + self._plugin_metrics_buffer
+                self._atomic_rewrite_plugin_metrics(rows)
+                self._resume_plugin_metrics_rows = rows
+                self._plugin_metrics_buffer = []
         else:
             self._flush_global()
             for layer_name in list(self._layer_buffers.keys()):
                 self._flush_layer(layer_name)
+            self._flush_plugin_metrics()
 
         self._write_manifest()
+        logger.debug("Flushed writer for run %s", self._run_path.name)
 
     def close(self):
         if self._closed:
@@ -478,4 +598,10 @@ class DiskWriter:
                 except Exception:
                     pass
             self._layer_writers = {}
+            if self._plugin_metrics_writer is not None:
+                try:
+                    self._plugin_metrics_writer.close()
+                except Exception:
+                    pass
+                self._plugin_metrics_writer = None
             self._closed = True

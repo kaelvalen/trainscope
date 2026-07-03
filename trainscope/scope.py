@@ -11,16 +11,18 @@ from torch.optim import Optimizer
 
 from trainscope.core.buffer import RollingBuffer
 from trainscope.core.config import TrainScopeConfig
-from trainscope.core.detector import SpikeDetector
+from trainscope.core.detectors import make_detector
 from trainscope.core.metrics import (
     compute_activation_metrics,
     compute_gradient_metrics,
     compute_weight_histogram,
     compute_weight_metrics,
 )
+from trainscope.io import RemoteWriter
 from trainscope.io.writer import DiskWriter
+from trainscope.plugins import instantiate_metric_plugins, load_detector_plugins
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("trainscope")
 
 
 class StopTraining(Exception):
@@ -59,16 +61,27 @@ class TrainScope:
 
         run_name = self._config.run_name
         assert run_name is not None
-        run_path = Path(self._config.run_dir) / run_name
-        if self._config.rank is not None:
-            run_path = run_path.parent / f"{run_path.name}_rank{self._config.rank}"
 
-        self._writer = DiskWriter(run_path, self._config)
+        if self._config.storage_uri:
+            suffix = f"_rank{self._config.rank}" if self._config.rank is not None else ""
+            run_path = f"{self._config.storage_uri.rstrip('/')}/{run_name}{suffix}"
+            self._writer: DiskWriter | RemoteWriter = RemoteWriter(run_path, self._config)
+        else:
+            run_path = Path(self._config.run_dir) / run_name
+            if self._config.rank is not None:
+                run_path = run_path.parent / f"{run_path.name}_rank{self._config.rank}"
+            self._writer = DiskWriter(run_path, self._config)
+
         self._buffer = RollingBuffer(
             full_resolution_window=self._config.full_resolution_window,
             decimation_factor=self._config.decimation_factor,
         )
-        self._detector = SpikeDetector(threshold=self._config.spike_threshold)
+
+        # Load detector plugins (entry points + explicit config paths) before
+        # selecting the detector so plugin detector names are available.
+        load_detector_plugins(self._config.detector_plugins)
+        self._detector = make_detector(self._config)
+        self._metric_plugins = instantiate_metric_plugins(self._config.metric_plugins)
 
         self._act_cache: dict[str, dict] = {}
         self._hooks: list[Any] = []
@@ -76,7 +89,7 @@ class TrainScope:
         self._last_step_time: float | None = None
 
     @property
-    def writer(self) -> DiskWriter:
+    def writer(self) -> DiskWriter | RemoteWriter:
         return self._writer
 
     def _metric_device(self, tensor: torch.Tensor) -> str | torch.device:
@@ -133,6 +146,7 @@ class TrainScope:
             h_fwd = module.register_forward_hook(make_forward_hook(name))
             self._hooks.append(h_fwd)
 
+        logger.info("TrainScope attached to %s", self._model.__class__.__name__)
         return self
 
     def _compute_global_grad_norm(self) -> float:
@@ -171,6 +185,17 @@ class TrainScope:
             except Exception:
                 pass
         return cpu_mb, cuda_mb
+
+    def _run_metric_plugins(self, step: int):
+        for plugin in self._metric_plugins:
+            try:
+                metrics = plugin.compute(self._model, self._optimizer, step)
+                if metrics:
+                    self._writer.append_plugin_metrics(step, plugin.name, metrics)
+            except Exception:
+                logger.exception(
+                    "Metric plugin %s failed at step %d", plugin.name, step
+                )
 
     def step(
         self,
@@ -213,10 +238,10 @@ class TrainScope:
 
         if math.isnan(loss_f):
             # Do not poison the detector's baseline with NaN.
-            z_score = None
+            score = None
         else:
-            z_score = self._detector.update(loss_f)
-        is_spike = z_score is not None
+            score = self._detector.update(loss_f)
+        is_spike = score is not None
 
         should_histogram = step_idx % self._config.histogram_every_n_steps == 0 or is_spike
 
@@ -235,6 +260,8 @@ class TrainScope:
             cpu_mb, cuda_mb = self._memory_mb()
             global_snap["cpu_memory_mb"] = cpu_mb
             global_snap["cuda_memory_mb"] = cuda_mb
+
+        self._run_metric_plugins(step_idx)
 
         layer_snaps: dict[str, dict] = {}
         for name, param in self._model.named_parameters():
@@ -331,15 +358,17 @@ class TrainScope:
 
             self._writer.flush()
 
-            assert z_score is not None
+            assert score is not None
             spike_info = {
                 "step": step_idx,
                 "loss": loss_f,
-                "z_score": float(z_score),
+                "z_score": float(score),
             }
 
+            logger.info("Spike detected at step %d (score=%.2f)", step_idx, float(score))
+
             if self._config.stop_on_spike:
-                raise StopTraining(step_idx, z_score)
+                raise StopTraining(step_idx, score)
 
             return spike_info
 
@@ -353,6 +382,7 @@ class TrainScope:
             hook.remove()
         self._hooks.clear()
         self._writer.close()
+        logger.info("TrainScope detached")
 
     def __enter__(self):
         return self.attach()

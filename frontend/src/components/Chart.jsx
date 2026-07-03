@@ -1,5 +1,6 @@
 import Plot from 'react-plotly.js'
 import { DARK_LAYOUT, PLOT_CONFIG } from '../theme.js'
+import { cn } from '../utils.js'
 
 /**
  * Consistent Plotly wrapper for the TrainScope dark theme.
@@ -7,7 +8,7 @@ import { DARK_LAYOUT, PLOT_CONFIG } from '../theme.js'
  * Accepts the same `data`, `layout`, and `config` props as react-plotly.js but
  * merges in the shared dark layout defaults so individual views stay small.
  */
-export default function Chart({ data, layout = {}, config = {}, style = {}, ...rest }) {
+export default function Chart({ data, layout = {}, config = {}, className, ...rest }) {
   const mergedLayout = {
     ...DARK_LAYOUT,
     ...layout,
@@ -20,13 +21,15 @@ export default function Chart({ data, layout = {}, config = {}, style = {}, ...r
   const mergedConfig = { ...PLOT_CONFIG, ...config }
 
   return (
-    <Plot
-      data={data}
-      layout={mergedLayout}
-      config={mergedConfig}
-      style={{ width: '100%', ...style }}
-      useResizeHandler
-      {...rest}
-    />
+    <div className={cn('w-full', className)}>
+      <Plot
+        data={data}
+        layout={mergedLayout}
+        config={mergedConfig}
+        style={{ width: '100%' }}
+        useResizeHandler
+        {...rest}
+      />
+    </div>
   )
 }

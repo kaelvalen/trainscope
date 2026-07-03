@@ -1,8 +1,82 @@
+import json
+import os
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
 import torch
+import yaml
+
+from trainscope.core.profiles import PRESETS
+
+
+def _coerce_value(field_name: str, raw: str) -> Any:
+    """Parse an environment-variable string into the right Python type."""
+    raw = raw.strip()
+    if raw == "":
+        return None
+
+    # Boolean fields.
+    bool_fields = {
+        "stop_on_spike",
+        "track_memory",
+        "resume",
+    }
+    if field_name in bool_fields:
+        return raw.lower() in {"1", "true", "yes", "on"}
+
+    # List fields.
+    list_fields = {
+        "activation_layer_filter",
+        "metric_plugins",
+        "detector_plugins",
+        "alerts",
+    }
+    if field_name in list_fields:
+        if raw.startswith("["):
+            parsed = yaml.safe_load(raw)
+            return parsed if isinstance(parsed, list) else []
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
+    # Dict fields (detector config / integrations).
+    if field_name == "detector":
+        if raw.startswith(("{", "[")):
+            parsed = yaml.safe_load(raw)
+            return parsed if isinstance(parsed, dict) else {"name": str(parsed)}
+        return {"name": raw}
+
+    if field_name == "integrations":
+        if raw.startswith(("{", "[")):
+            parsed = yaml.safe_load(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+    # Numeric fields.
+    int_fields = {
+        "full_resolution_window",
+        "decimation_factor",
+        "spike_window_before",
+        "spike_window_after",
+        "n_histogram_bins",
+        "histogram_every_n_steps",
+        "activation_metrics_every_n_steps",
+        "trace_every_n_steps",
+        "rank",
+        "rng_every_n_steps",
+    }
+    if field_name in int_fields:
+        return int(raw)
+
+    float_fields = {
+        "spike_threshold",
+    }
+    if field_name in float_fields:
+        return float(raw)
+
+    # Fallback to string.
+    return raw
 
 
 @dataclass
@@ -49,6 +123,22 @@ class TrainScopeConfig:
     # If True and a run directory already contains Arrow files, resume by
     # appending new rows. Otherwise existing files are overwritten.
     resume: bool = False
+    # Experiment-tracker integrations (wandb, tensorboard, mlflow).
+    integrations: dict[str, Any] = field(default_factory=dict)
+    # Alert backends (slack, email) triggered on spike detection.
+    alerts: list[dict[str, Any]] = field(default_factory=list)
+
+    # Remote storage URI. When unset, the local DiskWriter is used. Supported
+    # schemes include ``s3://``, ``gs://``, ``az://`` and ``file://``.
+    storage_uri: str | None = None
+    # Anomaly detector configuration. A string selects a detector by name; a
+    # dict provides ``name`` plus constructor kwargs. Defaults to a z-score
+    # detector using ``spike_threshold``.
+    detector: str | dict | None = None
+    # Explicit plugin class paths (e.g. ``myplugin.MyMetric``) to load in
+    # addition to entry-point discovered plugins.
+    metric_plugins: list[str] = field(default_factory=list)
+    detector_plugins: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.run_name is None:
@@ -86,6 +176,25 @@ class TrainScopeConfig:
                 stacklevel=2,
             )
 
+        if isinstance(self.detector, str):
+            self.detector = {"name": self.detector}
+        if self.detector is None:
+            self.detector = {"name": "z_score", "threshold": self.spike_threshold}
+        if not isinstance(self.detector, dict) or "name" not in self.detector:
+            raise ValueError("detector must be a detector name or a dict with a 'name' key")
+
+        if self.storage_uri is not None and not isinstance(self.storage_uri, str):
+            raise ValueError("storage_uri must be a string or None")
+
+        if not isinstance(self.metric_plugins, list) or not all(
+            isinstance(x, str) for x in self.metric_plugins
+        ):
+            raise ValueError("metric_plugins must be a list of strings")
+        if not isinstance(self.detector_plugins, list) or not all(
+            isinstance(x, str) for x in self.detector_plugins
+        ):
+            raise ValueError("detector_plugins must be a list of strings")
+
     def to_dict(self) -> dict:
         """Return a JSON-serializable snapshot of the config."""
         return {
@@ -108,4 +217,69 @@ class TrainScopeConfig:
             "checkpoint_on_spike": self.checkpoint_on_spike,
             "rng_every_n_steps": self.rng_every_n_steps,
             "resume": self.resume,
+            "storage_uri": self.storage_uri,
+            "detector": self.detector,
+            "metric_plugins": self.metric_plugins,
+            "detector_plugins": self.detector_plugins,
+            "integrations": self.integrations,
+            "alerts": self.alerts,
         }
+
+    @classmethod
+    def from_yaml(cls, path: str | Path) -> "TrainScopeConfig":
+        """Load a config from a YAML file."""
+        path = Path(path)
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        return load_config(data)
+
+    @classmethod
+    def from_env(cls, prefix: str = "TRAINSCOPE_") -> "TrainScopeConfig":
+        """Build a config from ``TRAINSCOPE_*`` environment variables."""
+        profile_name = os.environ.get(f"{prefix}PROFILE")
+        base: dict[str, Any] = {}
+        if profile_name:
+            base = PRESETS.get(profile_name, PRESETS["default"])()
+
+        overrides: dict[str, Any] = {}
+        field_names = {f.name for f in cls.__dataclass_fields__.values()}
+        for key, value in os.environ.items():
+            if not key.startswith(prefix) or key == f"{prefix}PROFILE":
+                continue
+            field_name = key[len(prefix):].lower()
+            if field_name not in field_names:
+                continue
+            overrides[field_name] = _coerce_value(field_name, value)
+
+        merged = {**base, **overrides}
+        return cls(**merged)
+
+
+def load_config(path_or_dict: str | Path | dict[str, Any] | TrainScopeConfig) -> TrainScopeConfig:
+    """Load a :class:`TrainScopeConfig` from a path, dict, or pass one through.
+
+    Supports YAML files (``.yaml`` / ``.yml``) and JSON files. Dicts may
+    contain a ``profile`` key that selects preset overrides before applying the
+    rest of the configuration.
+    """
+    if isinstance(path_or_dict, TrainScopeConfig):
+        return path_or_dict
+
+    if isinstance(path_or_dict, (str, Path)):
+        path = Path(path_or_dict)
+        with open(path, "r", encoding="utf-8") as f:
+            if path.suffix.lower() in {".yaml", ".yml"}:
+                data = yaml.safe_load(f) or {}
+            else:
+                data = json.load(f)
+    elif isinstance(path_or_dict, dict):
+        data = dict(path_or_dict)
+    else:
+        raise TypeError(
+            f"Expected Path, str, dict or TrainScopeConfig, got {type(path_or_dict)}"
+        )
+
+    profile_name = data.pop("profile", None)
+    base = PRESETS.get(profile_name, PRESETS["default"])() if profile_name else {}
+    merged = {**base, **data}
+    return TrainScopeConfig(**merged)
