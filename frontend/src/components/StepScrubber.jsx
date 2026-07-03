@@ -1,5 +1,4 @@
 import { useMemo } from 'react'
-import { COLORS } from '../theme.js'
 
 export default function StepScrubber({
   steps,
@@ -29,8 +28,8 @@ export default function StepScrubber({
   }
 
   return (
-    <div className="ts-control-row">
-      <label htmlFor={id} className="ts-label">
+    <div className="flex flex-wrap items-center gap-3">
+      <label htmlFor={id} className="text-xs font-medium text-muted">
         {label}
       </label>
       <input
@@ -41,8 +40,7 @@ export default function StepScrubber({
         step={steps.length > 1 ? steps[1] - steps[0] : 1}
         value={value ?? min}
         onChange={handleChange}
-        className="ts-slider"
-        style={{ flex: 1 }}
+        className="h-1 flex-1 cursor-pointer appearance-none rounded bg-border accent-accent"
         list={`${id}-ticks`}
       />
       <datalist id={`${id}-ticks`}>
@@ -51,16 +49,7 @@ export default function StepScrubber({
         ))}
       </datalist>
       {showValue && (
-        <span
-          style={{
-            fontSize: '12px',
-            color: COLORS.muted,
-            minWidth: '60px',
-            textAlign: 'right',
-          }}
-        >
-          Step {value ?? min}
-        </span>
+        <span className="min-w-[4rem] text-right text-xs text-muted">Step {value ?? min}</span>
       )}
     </div>
   )

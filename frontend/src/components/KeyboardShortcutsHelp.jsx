@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { COLORS } from '../theme.js'
+import { Button } from './ui/Button.jsx'
+import { Card, CardContent, CardHeader, CardTitle } from './ui/Card.jsx'
 import useKeyboardShortcuts from '../hooks/useKeyboardShortcuts.js'
 
 const SHORTCUTS = [
-  { keys: ['1', '2', '3', '4'], description: 'Switch tabs' },
-  { keys: ['←', '→'], description: 'Previous / next tab' },
+  { keys: ['1', '2', '3', '4'], description: 'Switch views' },
+  { keys: ['←', '→'], description: 'Previous / next view' },
   { keys: ['?'], description: 'Toggle this help' },
+  { keys: ['r'], description: 'Refresh run data' },
 ]
 
 export default function KeyboardShortcutsHelp() {
@@ -15,94 +17,54 @@ export default function KeyboardShortcutsHelp() {
 
   return (
     <>
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => setOpen((o) => !o)}
-        className="ts-button ts-button-ghost"
         title="Keyboard shortcuts (?)"
         aria-label="Keyboard shortcuts"
       >
         ?
-      </button>
+      </Button>
+
       {open && (
         <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            background: 'rgba(0, 0, 0, 0.6)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            padding: '16px',
-          }}
+          className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/60 p-4"
           onClick={() => setOpen(false)}
           role="dialog"
           aria-modal="true"
           aria-labelledby="keyboard-help-title"
         >
-          <div
-            style={{
-              background: COLORS.panel,
-              border: `1px solid ${COLORS.border}`,
-              borderRadius: '8px',
-              padding: '24px',
-              minWidth: '280px',
-              maxWidth: '400px',
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2
-              id="keyboard-help-title"
-              style={{ fontSize: '16px', marginBottom: '16px', color: COLORS.text }}
-            >
-              Keyboard shortcuts
-            </h2>
-            <ul style={{ listStyle: 'none', padding: 0, margin: 0 }}>
-              {SHORTCUTS.map(({ keys, description }) => (
-                <li
-                  key={description}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    gap: '16px',
-                    padding: '8px 0',
-                    borderBottom: `1px solid ${COLORS.border}`,
-                    fontSize: '13px',
-                    color: COLORS.muted,
-                  }}
-                >
-                  <span>{description}</span>
-                  <span style={{ display: 'flex', gap: '4px' }}>
-                    {keys.map((k) => (
-                      <kbd
-                        key={k}
-                        style={{
-                          background: COLORS.bg,
-                          border: `1px solid ${COLORS.border}`,
-                          borderRadius: '4px',
-                          padding: '2px 6px',
-                          color: COLORS.text,
-                          fontFamily: 'monospace',
-                        }}
-                      >
-                        {k}
-                      </kbd>
-                    ))}
-                  </span>
-                </li>
-              ))}
-            </ul>
-            <button
-              onClick={() => setOpen(false)}
-              className="ts-button"
-              style={{ marginTop: '16px', width: '100%' }}
-            >
-              Close
-            </button>
-          </div>
+          <Card className="w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
+            <CardHeader>
+              <CardTitle id="keyboard-help-title">Keyboard shortcuts</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ul className="divide-y divide-border">
+                {SHORTCUTS.map(({ keys, description }) => (
+                  <li
+                    key={description}
+                    className="flex items-center justify-between py-2.5 text-sm"
+                  >
+                    <span className="text-muted">{description}</span>
+                    <span className="flex items-center gap-1">
+                      {keys.map((k) => (
+                        <kbd
+                          key={k}
+                          className="rounded border border-border bg-background px-1.5 py-0.5 text-xs font-mono text-foreground"
+                        >
+                          {k}
+                        </kbd>
+                      ))}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <Button variant="primary" className="mt-4 w-full" onClick={() => setOpen(false)}>
+                Close
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       )}
     </>

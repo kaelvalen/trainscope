@@ -5,9 +5,12 @@ import { CHART_COLORS } from '../theme.js'
 import Chart from '../components/Chart.jsx'
 import LayerSelect from '../components/LayerSelect.jsx'
 import StepScrubber from '../components/StepScrubber.jsx'
-import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
+import { Skeleton } from '../components/ui/Skeleton.jsx'
+import { StatCard } from '../components/ui/StatCard.jsx'
+import { Card } from '../components/ui/Card.jsx'
+import { Activity, Scale, BarChart3 } from 'lucide-react'
 
 function mean(arr) {
   if (!arr.length) return 0
@@ -18,6 +21,10 @@ function stddev(arr) {
   if (arr.length < 2) return 0
   const m = mean(arr)
   return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length)
+}
+
+function formatFloat(v) {
+  return typeof v === 'number' ? v.toFixed(4) : '—'
 }
 
 export default function LayerDrilldown() {
@@ -45,7 +52,7 @@ export default function LayerDrilldown() {
       .then((rows) => {
         if (cancelled) return
         setLayerData(rows)
-        if (rows.length > 0) setScrubStep(rows[0].step)
+        if (rows.length > 0) setScrubStep(rows[rows.length - 1].step)
       })
       .catch((err) => {
         if (!cancelled) setError(err?.message || `Failed to load ${selectedLayer}.`)
@@ -60,6 +67,23 @@ export default function LayerDrilldown() {
   }, [selectedLayer])
 
   const steps = useMemo(() => layerData.map((r) => r.step), [layerData])
+  const gradNorms = useMemo(() => layerData.map((r) => r.grad_l2_norm), [layerData])
+  const weightNorms = useMemo(() => layerData.map((r) => r.weight_l2_norm), [layerData])
+  const kurtosisValues = useMemo(() => layerData.map((r) => r.act_kurtosis), [layerData])
+
+  const stats = useMemo(() => {
+    const mkMetric = (values) => ({
+      mean: mean(values),
+      std: stddev(values),
+      max: values.length ? Math.max(...values) : 0,
+      min: values.length ? Math.min(...values) : 0,
+    })
+    return {
+      grad: mkMetric(gradNorms),
+      weight: mkMetric(weightNorms),
+      kurtosis: mkMetric(kurtosisValues),
+    }
+  }, [gradNorms, weightNorms, kurtosisValues])
 
   const scrubRow = useMemo(() => {
     if (scrubStep == null) return layerData.length > 0 ? layerData[layerData.length - 1] : null
@@ -85,15 +109,24 @@ export default function LayerDrilldown() {
   }
 
   return (
-    <div>
-      <LayerSelect
-        id="layer-drilldown-select"
-        layers={layerNames}
-        value={selectedLayer}
-        onChange={setSelectedLayer}
-      />
+    <div className="space-y-5">
+      <Card>
+        <LayerSelect
+          id="layer-drilldown-select"
+          layers={layerNames}
+          value={selectedLayer}
+          onChange={setSelectedLayer}
+        />
+      </Card>
 
-      {loading && <LoadingSpinner message="Loading layer data…" />}
+      {loading && (
+        <div className="space-y-4">
+          <Skeleton className="h-24" />
+          <Skeleton className="h-64" />
+          <Skeleton className="h-64" />
+        </div>
+      )}
+
       <ErrorMessage message={error} />
 
       {!loading && layerData.length === 0 && selectedLayer && !error && (
@@ -102,11 +135,32 @@ export default function LayerDrilldown() {
 
       {!loading && layerData.length > 0 && (
         <>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <StatCard
+              label="Mean Grad L2"
+              value={formatFloat(stats.grad.mean)}
+              subtitle={`σ = ${formatFloat(stats.grad.std)}`}
+              icon={Activity}
+            />
+            <StatCard
+              label="Mean Weight L2"
+              value={formatFloat(stats.weight.mean)}
+              subtitle={`max ${formatFloat(stats.weight.max)}`}
+              icon={Scale}
+            />
+            <StatCard
+              label="Mean Kurtosis"
+              value={formatFloat(stats.kurtosis.mean)}
+              subtitle={`max ${formatFloat(stats.kurtosis.max)}`}
+              icon={BarChart3}
+            />
+          </div>
+
           <Chart
             data={[
               {
                 x: steps,
-                y: layerData.map((r) => r.grad_l2_norm),
+                y: gradNorms,
                 type: 'scatter',
                 mode: 'lines',
                 name: 'Grad L2 Norm',
@@ -115,7 +169,8 @@ export default function LayerDrilldown() {
             ]}
             layout={{
               title: { text: 'Gradient L2 Norm', font: { size: 14 } },
-              height: 220,
+              height: 240,
+              uirevision: `layer-${selectedLayer}-grad`,
             }}
           />
 
@@ -123,7 +178,7 @@ export default function LayerDrilldown() {
             data={[
               {
                 x: steps,
-                y: layerData.map((r) => r.weight_l2_norm),
+                y: weightNorms,
                 type: 'scatter',
                 mode: 'lines',
                 name: 'Weight L2 Norm',
@@ -132,7 +187,8 @@ export default function LayerDrilldown() {
             ]}
             layout={{
               title: { text: 'Weight L2 Norm', font: { size: 14 } },
-              height: 220,
+              height: 240,
+              uirevision: `layer-${selectedLayer}-weight`,
             }}
           />
 
@@ -140,7 +196,7 @@ export default function LayerDrilldown() {
             data={[
               {
                 x: steps,
-                y: layerData.map((r) => r.act_kurtosis),
+                y: kurtosisValues,
                 type: 'scatter',
                 mode: 'lines',
                 name: 'Activation Kurtosis',
@@ -152,7 +208,7 @@ export default function LayerDrilldown() {
                 text: 'Activation Kurtosis (excess) — early spike signal',
                 font: { size: 14 },
               },
-              height: 220,
+              height: 240,
               shapes: [
                 {
                   type: 'line',
@@ -163,6 +219,7 @@ export default function LayerDrilldown() {
                   line: { color: CHART_COLORS.muted, width: 1, dash: 'dot' },
                 },
               ],
+              uirevision: `layer-${selectedLayer}-kurtosis`,
             }}
           />
 
@@ -184,8 +241,9 @@ export default function LayerDrilldown() {
                   text: `Weight Histogram at Step ${scrubRow?.step ?? '—'} (red = >2σ from mean)`,
                   font: { size: 14 },
                 },
-                height: 260,
+                height: 280,
                 xaxis: { tickangle: -35, tickfont: { size: 9 } },
+                uirevision: `layer-${selectedLayer}-hist`,
               }}
             />
           )}
