@@ -212,6 +212,35 @@ class TestChangePointDetector:
             f"CUSUM failed to detect drift on some scales: {detected_count}/{len(scales)}"
         )
 
+    def test_changepoint_sensitivity_by_drift_magnitude(self):
+        """Verify CUSUM sensitivity across drift magnitudes from +0.10σ to +0.50σ per step."""
+        import random
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        drift_rates = [0.10, 0.15, 0.25, 0.50]
+        scales = [1e-3, 1.0, 1e3]
+
+        for drift_rate in drift_rates:
+            for scale in scales:
+                rng = random.Random(f"drift_{drift_rate}_{scale}")
+                cp_det = ChangePointDetector(threshold=6.0, slack=1.0, min_observations=30)
+                # Warmup
+                for _ in range(50):
+                    cp_det.update(rng.gauss(0, scale))
+
+                # Drift
+                step_detected = None
+                for step_i in range(1, 60):
+                    val = drift_rate * scale * step_i + rng.gauss(0, scale)
+                    if cp_det.update(val) is not None:
+                        step_detected = step_i
+                        break
+
+                assert step_detected is not None, (
+                    f"Failed to detect drift_rate={drift_rate} at scale={scale}"
+                )
+
     def test_changepoint_no_false_positives_on_pure_noise(self):
         import random
 
