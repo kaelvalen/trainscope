@@ -9,8 +9,9 @@ import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { Skeleton } from '../components/ui/Skeleton.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
-import { Card } from '../components/ui/Card.jsx'
-import { Activity, Scale, BarChart3 } from 'lucide-react'
+import { ChartCard } from '../components/ui/ChartCard.jsx'
+import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.jsx'
+import { Activity, BarChart3, FolderOpen, Scale, Search } from 'lucide-react'
 
 function mean(arr) {
   if (!arr.length) return 0
@@ -105,18 +106,32 @@ export default function LayerDrilldown() {
   }, [scrubRow])
 
   if (layerNames.length === 0) {
-    return <EmptyState icon="🔍">No layers found. Has a training run completed?</EmptyState>
+    return (
+      <EmptyState icon={<Search className="h-5 w-5" />}>
+        No layers found. Has a training run completed?
+      </EmptyState>
+    )
   }
 
   return (
     <div className="space-y-5">
-      <Card>
-        <LayerSelect
-          id="layer-drilldown-select"
-          layers={layerNames}
-          value={selectedLayer}
-          onChange={setSelectedLayer}
-        />
+      <Card className="control-card">
+        <CardHeader>
+          <div>
+            <CardTitle>Choose a layer</CardTitle>
+            <p className="chart-card__description">
+              Inspect gradient, weight, and activation signals.
+            </p>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <LayerSelect
+            id="layer-drilldown-select"
+            layers={layerNames}
+            value={selectedLayer}
+            onChange={setSelectedLayer}
+          />
+        </CardContent>
       </Card>
 
       {loading && (
@@ -130,7 +145,9 @@ export default function LayerDrilldown() {
       <ErrorMessage message={error} />
 
       {!loading && layerData.length === 0 && selectedLayer && !error && (
-        <EmptyState icon="📂">No data for layer: {selectedLayer}</EmptyState>
+        <EmptyState icon={<FolderOpen className="h-5 w-5" />}>
+          No data for layer: {selectedLayer}
+        </EmptyState>
       )}
 
       {!loading && layerData.length > 0 && (
@@ -156,96 +173,100 @@ export default function LayerDrilldown() {
             />
           </div>
 
-          <Chart
-            data={[
-              {
-                x: steps,
-                y: gradNorms,
-                type: 'scatter',
-                mode: 'lines',
-                name: 'Grad L2 Norm',
-                line: { color: CHART_COLORS.gradNorm, width: 1.5 },
-              },
-            ]}
-            layout={{
-              title: { text: 'Gradient L2 Norm', font: { size: 14 } },
-              height: 240,
-              uirevision: `layer-${selectedLayer}-grad`,
-            }}
-          />
-
-          <Chart
-            data={[
-              {
-                x: steps,
-                y: weightNorms,
-                type: 'scatter',
-                mode: 'lines',
-                name: 'Weight L2 Norm',
-                line: { color: CHART_COLORS.weight, width: 1.5 },
-              },
-            ]}
-            layout={{
-              title: { text: 'Weight L2 Norm', font: { size: 14 } },
-              height: 240,
-              uirevision: `layer-${selectedLayer}-weight`,
-            }}
-          />
-
-          <Chart
-            data={[
-              {
-                x: steps,
-                y: kurtosisValues,
-                type: 'scatter',
-                mode: 'lines',
-                name: 'Activation Kurtosis',
-                line: { color: CHART_COLORS.kurtosis, width: 1.5 },
-              },
-            ]}
-            layout={{
-              title: {
-                text: 'Activation Kurtosis (excess) — early spike signal',
-                font: { size: 14 },
-              },
-              height: 240,
-              shapes: [
+          <ChartCard
+            title="Gradient L2 norm"
+            description="Magnitude of the layer update signal over time."
+          >
+            <Chart
+              data={[
                 {
-                  type: 'line',
-                  x0: steps[0],
-                  x1: steps[steps.length - 1],
-                  y0: 0,
-                  y1: 0,
-                  line: { color: CHART_COLORS.muted, width: 1, dash: 'dot' },
+                  x: steps,
+                  y: gradNorms,
+                  type: 'scatter',
+                  mode: 'lines',
+                  name: 'Grad L2 Norm',
+                  line: { color: CHART_COLORS.gradNorm, width: 1.5 },
                 },
-              ],
-              uirevision: `layer-${selectedLayer}-kurtosis`,
-            }}
-          />
+              ]}
+              layout={{ height: 240, uirevision: `layer-${selectedLayer}-grad` }}
+            />
+          </ChartCard>
+
+          <ChartCard
+            title="Weight L2 norm"
+            description="Weight magnitude can expose slow parameter drift or runaway updates."
+          >
+            <Chart
+              data={[
+                {
+                  x: steps,
+                  y: weightNorms,
+                  type: 'scatter',
+                  mode: 'lines',
+                  name: 'Weight L2 Norm',
+                  line: { color: CHART_COLORS.weight, width: 1.5 },
+                },
+              ]}
+              layout={{ height: 240, uirevision: `layer-${selectedLayer}-weight` }}
+            />
+          </ChartCard>
+
+          <ChartCard
+            title="Activation kurtosis"
+            description="Excess kurtosis is an early signal for heavy-tailed activations."
+          >
+            <Chart
+              data={[
+                {
+                  x: steps,
+                  y: kurtosisValues,
+                  type: 'scatter',
+                  mode: 'lines',
+                  name: 'Activation Kurtosis',
+                  line: { color: CHART_COLORS.kurtosis, width: 1.5 },
+                },
+              ]}
+              layout={{
+                height: 240,
+                shapes: [
+                  {
+                    type: 'line',
+                    x0: steps[0],
+                    x1: steps[steps.length - 1],
+                    y0: 0,
+                    y1: 0,
+                    line: { color: CHART_COLORS.muted, width: 1, dash: 'dot' },
+                  },
+                ],
+                uirevision: `layer-${selectedLayer}-kurtosis`,
+              }}
+            />
+          </ChartCard>
 
           <StepScrubber steps={steps} value={scrubStep} onChange={setScrubStep} />
 
           {histCounts.length > 0 && (
-            <Chart
-              data={[
-                {
-                  x: binLabels,
-                  y: histCounts,
-                  type: 'bar',
-                  marker: { color: histColors },
-                  name: 'Weight Histogram',
-                },
-              ]}
-              layout={{
-                title: {
-                  text: `Weight Histogram at Step ${scrubRow?.step ?? '—'} (red = >2σ from mean)`,
-                  font: { size: 14 },
-                },
-                height: 280,
-                xaxis: { tickangle: -35, tickfont: { size: 9 } },
-                uirevision: `layer-${selectedLayer}-hist`,
-              }}
-            />
+            <ChartCard
+              title={`Weight histogram at step ${scrubRow?.step ?? '—'}`}
+              description="Red bins sit more than two standard deviations from the bin-count mean."
+            >
+              <Chart
+                data={[
+                  {
+                    x: binLabels,
+                    y: histCounts,
+                    type: 'bar',
+                    marker: { color: histColors },
+                    name: 'Weight Histogram',
+                  },
+                ]}
+                layout={{
+                  height: 280,
+                  xaxis: { tickangle: -35, tickfont: { size: 9 } },
+                  uirevision: `layer-${selectedLayer}-hist`,
+                }}
+              />
+            </ChartCard>
           )}
         </>
       )}

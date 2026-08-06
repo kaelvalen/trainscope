@@ -1,7 +1,7 @@
 export default function LoadingSpinner({ message = 'Loading…' }) {
   return (
     <div
-      className="flex flex-col items-center justify-center gap-3 p-10 text-muted"
+      className="flex flex-col items-center justify-center gap-3 rounded-xl border border-border bg-panel/60 p-12 text-muted"
       role="status"
       aria-live="polite"
     >

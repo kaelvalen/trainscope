@@ -98,20 +98,38 @@ class TransformerLM(nn.Module):
         return self.head(h)
 
 
+def free_port(port=7007):
+    import os, signal, socket
+
+    current_pid = os.getpid()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("127.0.0.1", port)) == 0:
+            try:
+                out = subprocess.check_output(f"lsof -t -i:{port}", shell=True).decode().strip()
+                if out:
+                    for pid_str in out.split():
+                        try:
+                            pid = int(pid_str)
+                            if pid != current_pid:
+                                os.kill(pid, signal.SIGKILL)
+                        except Exception:
+                            pass
+                    time.sleep(0.8)
+            except Exception:
+                pass
+
+
 def main():
     print("=" * 70)
     print(" 🚀 TrainScope Real-Life End-to-End Showcase ")
     print("=" * 70)
 
-    torch.manual_seed(42)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    model = TransformerLM().to(device)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+    free_port(7007)
 
     run_dir = "./trainscope_runs/realife_demo_run"
     config = TrainScopeConfig(
         run_dir=run_dir,
+        run_name="realife_demo",
         spike_threshold=3.5,
         stop_on_spike=False,
         full_resolution_window=500,
@@ -120,62 +138,11 @@ def main():
         track_memory=True,
     )
 
-    scope = TrainScope(model, optimizer, config=config).attach()
-    scope.writer.write_meta(
-        "TransformerLM-4L",
-        {"vocab": VOCAB, "d_model": D_MODEL, "n_heads": N_HEADS, "n_layers": N_LAYERS},
-    )
+    run_path = os.path.abspath(os.path.join(config.run_dir, config.run_name))
+    os.makedirs(run_path, exist_ok=True)
 
-    print(f"\n[1/3] Training 4-Layer Transformer ({N_STEPS} steps)...")
-    print(f"      Run Directory: {config.run_name}\n")
-
-    for step in range(N_STEPS):
-        x = torch.randint(0, VOCAB, (BATCH, SEQ_LEN), device=device)
-        targets = torch.randint(0, VOCAB, (BATCH, SEQ_LEN), device=device)
-
-        optimizer.zero_grad()
-        logits = model(x)
-        loss = F.cross_entropy(logits.view(-1, VOCAB), targets.view(-1))
-
-        # Phase 2: Inject gradual loss drift (Steps 80-99)
-        if DRIFT_START <= step < SPIKE_STEP:
-            loss = loss * (1.0 + 0.15 * (step - DRIFT_START + 1))
-
-        # Phase 3: Inject gradient explosion & spike (Step 100)
-        if step == SPIKE_STEP:
-            loss = loss * 100.0
-            # Induce gradient explosion in last block
-            for p in model.blocks[-1].parameters():
-                if p.grad is not None:
-                    p.grad.data.mul_(50.0)
-
-        loss.backward()
-
-        # Step recorder
-        spike = scope.step(loss.item(), batch_index=step)
-        optimizer.step()
-
-        if spike:
-            print(
-                f"  ⚠️  [DETECTION] Step {step:3d} | Loss: {loss.item():8.4f} | "
-                f"Anomaly Score (z): {spike.get('z_score', 0):6.2f}"
-            )
-        elif step % 20 == 0:
-            print(f"  step {step:3d} | Loss: {loss.item():7.4f}")
-
-    scope.writer.flush()
-    scope.writer.close()
-    scope.detach()
-
-    print("\n[2/3] Run artifacts successfully generated & persisted to Arrow format.")
-
-    # Start UI server automatically
-    print("\n[3/3] Launching TrainScope UI Server on http://localhost:7007 ...")
-    print("=" * 70)
-    print(" 🌟 Open your browser & record your demo GIF:")
-    print(" 👉 http://localhost:7007")
-    print("=" * 70)
-    print(" Press Ctrl+C anytime to stop the UI server.\n")
+    print("\n[1/3] Launching TrainScope UI Server FIRST...")
+    print(f"      Run Directory: {run_path}\n")
 
     cmd = [
         sys.executable,
@@ -183,13 +150,78 @@ def main():
         "trainscope.cli",
         "ui",
         "--run",
-        os.path.join(config.run_dir, config.run_name),
+        run_path,
         "--port",
         "7007",
     ]
 
+    proc = subprocess.Popen(cmd)
+    time.sleep(1.5)
+
+    print("=" * 70)
+    print(" 🌟 Open your browser NOW to watch live telemetry & record demo:")
+    print(" 👉 http://localhost:7007")
+    print("=" * 70)
+
+    torch.manual_seed(42)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    model = TransformerLM().to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
+
+    scope = TrainScope(model, optimizer, config=config).attach()
+    scope.writer.write_meta(
+        "TransformerLM-4L",
+        {"vocab": VOCAB, "d_model": D_MODEL, "n_heads": N_HEADS, "n_layers": N_LAYERS},
+    )
+
+    print(f"\n[2/3] Training 4-Layer Transformer ({N_STEPS} steps)...")
+
     try:
-        proc = subprocess.Popen(cmd)
+        for step in range(N_STEPS):
+            time.sleep(0.04)  # Small pacing delay for real-time visual streaming
+            x = torch.randint(0, VOCAB, (BATCH, SEQ_LEN), device=device)
+            targets = torch.randint(0, VOCAB, (BATCH, SEQ_LEN), device=device)
+
+            optimizer.zero_grad()
+            logits = model(x)
+            loss = F.cross_entropy(logits.view(-1, VOCAB), targets.view(-1))
+
+            # Phase 2: Inject gradual loss drift (Steps 80-99)
+            if DRIFT_START <= step < SPIKE_STEP:
+                loss = loss * (1.0 + 0.15 * (step - DRIFT_START + 1))
+
+            # Phase 3: Inject gradient explosion & spike (Step 100)
+            if step == SPIKE_STEP:
+                loss = loss * 100.0
+                # Induce gradient explosion in last block
+                for p in model.blocks[-1].parameters():
+                    if p.grad is not None:
+                        p.grad.data.mul_(50.0)
+
+            loss.backward()
+
+            # Step recorder
+            spike = scope.step(loss.item(), batch_index=step)
+            optimizer.step()
+
+            if spike:
+                print(
+                    f"  ⚠️  [DETECTION] Step {step:3d} | Loss: {loss.item():8.4f} | "
+                    f"Anomaly Score (z): {spike.get('z_score', 0):6.2f}"
+                )
+            elif step % 20 == 0:
+                print(f"  step {step:3d} | Loss: {loss.item():7.4f}")
+
+        scope.writer.flush()
+        scope.writer.close()
+        scope.detach()
+
+        print("\n[3/3] Training run complete! Artifacts persisted.")
+        print("=" * 70)
+        print(" 🌟 Server is live at http://localhost:7007")
+        print(" Press Ctrl+C anytime to stop the UI server.\n")
+
         proc.wait()
     except KeyboardInterrupt:
         print("\nStopping UI server...")

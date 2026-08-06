@@ -3,6 +3,8 @@ import { fetchMeta, fetchGlobal, fetchLayers, fetchSpikes, abortAllRequests } fr
 import { useWebSocket } from './ws.js'
 import { useToast } from './context/ToastContext.jsx'
 
+import { groupSpikes } from './utils/spikeCluster.js'
+
 const RunContext = createContext(null)
 
 export function useRun() {
@@ -31,6 +33,7 @@ export function RunProvider({ children }) {
   const [liveStatus, setLiveStatus] = useState('connecting')
 
   const initialLoadComplete = useRef(false)
+  const toastedStepsRef = useRef(new Set())
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -98,11 +101,18 @@ export function RunProvider({ children }) {
             if (prev.some((s) => s.step === spike.step)) return prev
             return [...prev, spike].sort((a, b) => a.step - b.step)
           })
-          addToast({
-            title: 'Spike detected',
-            message: `Anomaly at step ${spike.step}`,
-            variant: 'danger',
-          })
+          // A WebSocket reconnect resends every spike detected so far (the
+          // server has no notion of what this specific connection already
+          // saw), so toast at most once per step per session or every
+          // reconnect re-floods the toast stack with the full backlog.
+          if (!toastedStepsRef.current.has(spike.step)) {
+            toastedStepsRef.current.add(spike.step)
+            addToast({
+              title: 'Spike detected',
+              message: `Anomaly at step ${spike.step}`,
+              variant: 'danger',
+            })
+          }
           break
         }
         default:
@@ -125,9 +135,11 @@ export function RunProvider({ children }) {
 
   useEffect(() => {
     if (liveStatus !== 'unavailable') return undefined
-    const interval = window.setInterval(poll, 3000)
+    const interval = window.setInterval(poll, 1500)
     return () => window.clearInterval(interval)
   }, [liveStatus, poll])
+
+  const spikeEvents = useMemo(() => groupSpikes(globalData, spikes), [globalData, spikes])
 
   const value = useMemo(
     () => ({
@@ -135,13 +147,14 @@ export function RunProvider({ children }) {
       globalData,
       layerNames,
       spikes,
+      spikeEvents,
       loading,
       error,
       refresh: () => load(),
       isReady: !loading && !error && meta != null,
       liveStatus,
     }),
-    [meta, globalData, layerNames, spikes, loading, error, load, liveStatus]
+    [meta, globalData, layerNames, spikes, spikeEvents, loading, error, load, liveStatus]
   )
 
   return <RunContext.Provider value={value}>{children}</RunContext.Provider>

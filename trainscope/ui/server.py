@@ -14,13 +14,11 @@ import anyio
 import pyarrow.ipc as ipc
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("trainscope")
-
-LIVE_RUN_THRESHOLD_SECONDS = 10.0
 
 
 def _encode_layer_name(name: str) -> str:
@@ -58,11 +56,17 @@ def _read_arrow_sync(path: Path) -> list[dict]:
 
     Uses a context manager so the reader is closed explicitly even on older
     PyArrow versions where ``RecordBatchFileReader.close()`` is not exposed.
+    Gracefully handles in-flight writes when file footers are incomplete.
     """
-    if not path.exists():
+    if not path.exists() or path.stat().st_size == 0:
         return []
-    with ipc.open_file(str(path)) as reader:
-        table = reader.read_all()
+    try:
+        with ipc.open_file(str(path)) as reader:
+            table = reader.read_all()
+    except Exception:
+        # File is being concurrently written or has an incomplete footer/stream
+        return []
+
     raw = table.to_pydict()
     if not raw:
         return []
@@ -84,8 +88,8 @@ async def _read_arrow(path: Path) -> list[dict]:
     try:
         return await anyio.to_thread.run_sync(_read_arrow_sync, path)
     except Exception as exc:
-        logger.exception("Failed to read Arrow file %s", path)
-        raise HTTPException(status_code=500, detail=f"Failed to read {path.name}") from exc
+        logger.warning("Transient error reading Arrow file %s: %s", path, exc)
+        return []
 
 
 async def _read_json(path: Path) -> Any:
@@ -135,18 +139,6 @@ async def _get_layers(run_path: Path) -> list[str]:
         return []
     files = await anyio.to_thread.run_sync(lambda: sorted(layers_dir.glob("*.arrow")))
     return [_decode_layer_name(f.name) for f in files]
-
-
-async def _is_live_run(run_path: Path) -> bool:
-    """A run is considered live if its global.arrow was written recently."""
-    global_path = run_path / "global.arrow"
-    if not await anyio.to_thread.run_sync(global_path.exists):
-        return False
-    try:
-        mtime = await anyio.to_thread.run_sync(lambda: global_path.stat().st_mtime)
-    except Exception:
-        return False
-    return (time.time() - mtime) < LIVE_RUN_THRESHOLD_SECONDS
 
 
 class _TTLCache:
@@ -229,15 +221,27 @@ def create_app(run_path: str) -> FastAPI:
     async def manifest() -> Any:
         path = rp / "manifest.json"
         if not await anyio.to_thread.run_sync(path.exists):
-            raise HTTPException(status_code=404, detail="manifest.json not found")
-        return await _read_json(path)
+            return {}
+        try:
+            return await _read_json(path)
+        except Exception:
+            return {}
 
     @app.get("/api/meta")
     async def get_meta() -> Any:
         meta_file = rp / "meta.json"
         if not await anyio.to_thread.run_sync(meta_file.exists):
-            raise HTTPException(status_code=404, detail="meta.json not found")
-        return await _read_json(meta_file)
+            return {
+                "model_name": "Training in progress...",
+                "trainscope_config": {"run_name": rp.name},
+            }
+        try:
+            return await _read_json(meta_file)
+        except Exception:
+            return {
+                "model_name": "Training in progress...",
+                "trainscope_config": {"run_name": rp.name},
+            }
 
     @app.get("/api/global")
     async def get_global() -> list[dict]:
@@ -364,62 +368,55 @@ def create_app(run_path: str) -> FastAPI:
                 }
             )
 
-            if await _is_live_run(rp):
-                last_global_len = 0
-                last_spikes: set[int] = set()
-                last_layers: set[str] = set()
-                while True:
-                    global_rows = await _read_arrow(rp / "global.arrow")
-                    if last_global_len == 0:
-                        await websocket.send_json({"type": "global", "payload": global_rows})
-                        last_global_len = len(global_rows)
-                    elif len(global_rows) > last_global_len:
-                        new_rows = global_rows[last_global_len:]
-                        await websocket.send_json({"type": "global_delta", "payload": new_rows})
-                        last_global_len = len(global_rows)
-
-                    spikes = await _get_spike_steps(rp)
-                    new_spikes = spikes - last_spikes
-                    if new_spikes:
-                        for step in sorted(new_spikes):
-                            await websocket.send_json({"type": "spike", "payload": {"step": step}})
-                        last_spikes = spikes
-
-                    layers = set(await _get_layers(rp))
-                    if layers != last_layers:
-                        await websocket.send_json({"type": "layers", "payload": sorted(layers)})
-                        last_layers = layers
-
-                    await asyncio.sleep(1.0)
-            else:
+            # Poll continuously rather than branching once on "is this run live
+            # right now" — a run that hasn't written global.arrow yet (e.g. the
+            # browser connected the instant the server started, before the
+            # first training step landed) must not get stuck forever on a
+            # heartbeat-only path once it does go live.
+            last_global_len = 0
+            last_spikes: set[int] = set()
+            last_layers: set[str] = set()
+            while True:
                 global_rows = await _read_arrow(rp / "global.arrow")
-                await websocket.send_json({"type": "global", "payload": global_rows})
+                if last_global_len == 0 and global_rows:
+                    await websocket.send_json({"type": "global", "payload": global_rows})
+                    last_global_len = len(global_rows)
+                elif len(global_rows) > last_global_len:
+                    new_rows = global_rows[last_global_len:]
+                    await websocket.send_json({"type": "global_delta", "payload": new_rows})
+                    last_global_len = len(global_rows)
 
-                spikes_payload = [{"step": step} for step in await _get_spike_steps(rp)]
-                await websocket.send_json({"type": "spike", "payload": spikes_payload})
+                spikes = await _get_spike_steps(rp)
+                new_spikes = spikes - last_spikes
+                if new_spikes:
+                    for step in sorted(new_spikes):
+                        await websocket.send_json({"type": "spike", "payload": {"step": step}})
+                    last_spikes = spikes
 
-                layers_payload = await _get_layers(rp)
-                await websocket.send_json({"type": "layers", "payload": layers_payload})
+                layers = set(await _get_layers(rp))
+                if layers != last_layers:
+                    await websocket.send_json({"type": "layers", "payload": sorted(layers)})
+                    last_layers = layers
 
-                while True:
-                    await asyncio.sleep(5.0)
-                    await websocket.send_json(
-                        {"type": "heartbeat", "payload": {"time": time.time()}}
-                    )
+                await asyncio.sleep(1.0)
         except WebSocketDisconnect:
             logger.debug("WebSocket client disconnected from %s", rp)
         except Exception:
             logger.exception("WebSocket error for run %s", rp)
             await websocket.close(code=1011)
 
-    if (static_dir / "index.html").exists():
-        app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
-    else:
+    @app.get("/{full_path:path}")
+    async def serve_static(full_path: str) -> Response:
+        target = static_dir / full_path
+        if full_path and target.exists() and target.is_file():
+            return FileResponse(str(target))
 
-        @app.get("/")
-        async def index() -> HTMLResponse:
-            return HTMLResponse(
-                content="""<!DOCTYPE html>
+        index_file = static_dir / "index.html"
+        if index_file.exists():
+            return FileResponse(str(index_file))
+
+        return HTMLResponse(
+            content="""<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
@@ -441,7 +438,7 @@ def create_app(run_path: str) -> FastAPI:
   </div>
 </body>
 </html>"""
-            )
+        )
 
     return app
 

@@ -14,16 +14,34 @@
         python = pkgs.python312;
 
         pythonEnv = python.withPackages (ps: with ps; [
+          # Keep this list in sync with pyproject.toml's [project.dependencies]
+          # and the "dev" extra — nix's withPackages doesn't read pip extras or
+          # pyproject.toml, so anything used at import time must be listed here
+          # explicitly or it silently works only by luck (pulled in transitively
+          # by another package) or breaks outright.
           torch
           pyarrow
           fastapi
           uvicorn
+          # uvicorn[standard] extras.
+          websockets
+          httptools
+          uvloop
+          watchfiles
+          python-dotenv
           click
           numpy
           scipy
+          pyyaml
+          fsspec
+          # dev extras, needed for `pytest -q` / `ruff check` per the shellHook below.
           pytest
           pytest-asyncio
           ruff
+          mypy
+          aiofiles
+          httpx
+          prometheus-client
           hatchling
           pip
         ]);

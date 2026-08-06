@@ -1,21 +1,15 @@
-import { LineChart, Layers, GitCompare, Zap, X, Menu } from 'lucide-react'
+import { Activity, Menu, X } from 'lucide-react'
 import { Button } from './Button.jsx'
+import { LiveIndicator } from './LiveIndicator.jsx'
 import { cn } from '../../utils.js'
+import { NAV_ITEMS } from '../../navigation.js'
 
-const NAV_ITEMS = [
-  { label: 'Timeline', shortcut: '1', icon: LineChart },
-  { label: 'Layer Drill-down', shortcut: '2', icon: Layers },
-  { label: 'Diff View', shortcut: '3', icon: GitCompare },
-  { label: 'Spike Inspector', shortcut: '4', icon: Zap },
-]
-
-export function Sidebar({ activeIndex, onChange, mobileOpen, onClose }) {
+export function Sidebar({ activeIndex, onChange, mobileOpen, onClose, liveStatus, runName }) {
   return (
     <>
-      {/* Mobile overlay */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          className="sidebar-overlay fixed inset-0 z-40 lg:hidden"
           onClick={onClose}
           aria-hidden="true"
         />
@@ -23,18 +17,31 @@ export function Sidebar({ activeIndex, onChange, mobileOpen, onClose }) {
 
       <aside
         className={cn(
-          'fixed inset-y-0 left-0 z-50 w-64 transform border-r border-border bg-panel transition-transform lg:static lg:translate-x-0',
+          'app-sidebar fixed inset-y-0 left-0 z-50 w-64 transform transition-transform lg:static lg:translate-x-0',
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         )}
       >
-        <div className="flex h-14 items-center justify-between border-b border-border px-4 lg:hidden">
-          <span className="font-semibold text-foreground">Navigation</span>
-          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close navigation">
+        <div className="sidebar-brand">
+          <div className="brand-mark" aria-hidden="true">
+            <Activity className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="brand-name">TrainScope</div>
+            <div className="brand-caption">Training observability</div>
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="ml-auto lg:hidden"
+            onClick={onClose}
+            aria-label="Close navigation"
+          >
             <X className="h-4 w-4" />
           </Button>
         </div>
 
-        <nav className="flex flex-col gap-1 p-3" aria-label="Main navigation">
+        <div className="sidebar-section-label">Workspace</div>
+        <nav className="sidebar-nav" aria-label="Main navigation">
           {NAV_ITEMS.map((item, index) => {
             const Icon = item.icon
             const isActive = activeIndex === index
@@ -45,24 +52,34 @@ export function Sidebar({ activeIndex, onChange, mobileOpen, onClose }) {
                   onChange(index)
                   onClose?.()
                 }}
-                className={cn(
-                  'flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors',
-                  isActive
-                    ? 'bg-accent/10 text-accent'
-                    : 'text-muted hover:bg-muted/10 hover:text-foreground'
-                )}
+                className={cn('sidebar-nav-item', isActive && 'is-active')}
                 aria-current={isActive ? 'page' : undefined}
                 title={`${item.label} (press ${item.shortcut})`}
               >
-                <Icon className="h-4 w-4" />
+                <span className="sidebar-nav-icon" aria-hidden="true">
+                  <Icon className="h-4 w-4" />
+                </span>
                 <span className="flex-1 text-left">{item.label}</span>
-                <kbd className="rounded border border-border bg-background px-1.5 py-0.5 text-xs text-muted">
-                  {item.shortcut}
-                </kbd>
+                <kbd className="sidebar-key">{item.shortcut}</kbd>
               </button>
             )
           })}
         </nav>
+
+        <div className="sidebar-footer">
+          <div className="sidebar-status">
+            <div className="flex items-center justify-between gap-2">
+              <span className="sidebar-status__label">Connection</span>
+              <LiveIndicator status={liveStatus} compact />
+            </div>
+            <p className="sidebar-status__run" title={runName || undefined}>
+              {runName || 'Waiting for run data'}
+            </p>
+          </div>
+          <p className="sidebar-hint">
+            Press <kbd>?</kbd> for shortcuts
+          </p>
+        </div>
       </aside>
     </>
   )

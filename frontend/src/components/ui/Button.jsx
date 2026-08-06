@@ -2,10 +2,10 @@ import { forwardRef } from 'react'
 import { cn } from '../../utils.js'
 
 const variants = {
-  primary: 'bg-button text-white hover:brightness-110 focus-visible:ring-accent',
-  ghost: 'bg-transparent border border-border text-muted hover:border-accent hover:text-foreground',
-  danger: 'bg-danger-bg text-danger hover:brightness-110 focus-visible:ring-danger',
-  muted: 'bg-muted/10 text-muted hover:bg-muted/20 hover:text-foreground',
+  primary: 'ui-button--primary focus-visible:ring-accent',
+  ghost: 'ui-button--ghost focus-visible:ring-accent',
+  danger: 'ui-button--danger focus-visible:ring-danger',
+  muted: 'ui-button--muted focus-visible:ring-accent',
 }
 
 const sizes = {
@@ -23,7 +23,7 @@ export const Button = forwardRef(function Button(
     <button
       ref={ref}
       className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-md font-semibold transition-colors',
+        'ui-button inline-flex items-center justify-center gap-2 rounded-lg font-semibold transition-colors',
         'focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
         'disabled:cursor-not-allowed disabled:opacity-50',
         variants[variant],
