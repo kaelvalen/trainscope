@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 from trainscope.integrations import build_alerters, build_callbacks
@@ -11,6 +12,7 @@ from trainscope.integrations.alerts import EmailAlerter, NullAlerter, SlackAlert
 class FakeWandbRun:
     def __init__(self):
         self.logs: list[tuple[dict, int | None]] = []
+        self.alert: Any = None
 
     def log(self, metrics, step=None):
         self.logs.append((metrics, step))
@@ -146,6 +148,7 @@ class TestCallbackInterfaces:
 
     def test_wandb_on_spike(self):
         fake_run = FakeWandbRun()
+        fake_run.alert = MagicMock()
         module = _mock_wandb_module(fake_run)
         with patch.dict("sys.modules", {"wandb": module}):
             callbacks = build_callbacks({"wandb": {"project": "test"}})
@@ -157,6 +160,22 @@ class TestCallbackInterfaces:
             None,
         )
         assert any("spike" in str(log[0]) for log in fake_run.logs)
+        fake_run.alert.assert_not_called()
+
+    def test_wandb_on_spike_with_alerts_opt_in(self):
+        fake_run = FakeWandbRun()
+        fake_run.alert = MagicMock()
+        module = _mock_wandb_module(fake_run)
+        with patch.dict("sys.modules", {"wandb": module}):
+            callbacks = build_callbacks({"wandb": {"project": "test", "alerts": True}})
+
+        callback = callbacks[0]
+        callback.on_spike(
+            {"step": 5, "z_score": 4.0, "loss": 1.0},
+            {"step": 5, "loss": 1.0},
+            None,
+        )
+        fake_run.alert.assert_called_once()
 
     def test_tensorboard_on_spike(self):
         mock_writer = MagicMock()

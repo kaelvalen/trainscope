@@ -16,7 +16,13 @@ class WandbCallback:
         pip install trainscope[integrations]
     """
 
-    def __init__(self, project: str | None = None, entity: str | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        project: str | None = None,
+        entity: str | None = None,
+        alerts: bool = False,
+        **kwargs: Any,
+    ):
         try:
             import wandb
         except ImportError as exc:
@@ -24,6 +30,7 @@ class WandbCallback:
                 "WandbCallback requires wandb. Install it with: pip install trainscope[integrations]"
             ) from exc
 
+        self._alerts = alerts
         active_run = getattr(wandb, "run", None)
         if active_run is not None:
             self._run = active_run
@@ -79,7 +86,7 @@ class WandbCallback:
         metrics = {k: v for k, v in metrics.items() if v is not None}
         try:
             self._run.log({"spike": True, **metrics}, step=step)
-            if hasattr(self._run, "alert"):
+            if self._alerts and hasattr(self._run, "alert"):
                 z_score = spike_info.get("z_score", 0.0)
                 loss_val = spike_info.get("loss", 0.0)
                 self._run.alert(
