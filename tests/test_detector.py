@@ -182,6 +182,36 @@ class TestChangePointDetector:
             f"Expected CUSUM ({cp_step_detected}) to trigger earlier than ZScore ({z_step_detected})"
         )
 
+    def test_changepoint_sensitivity_across_scales(self):
+        """Verify CUSUM sensitivity (true positive rate) across 5 different noise scales."""
+        import random
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        scales = [1e-4, 0.01, 1.0, 100.0, 1e5]
+        detected_count = 0
+
+        for scale in scales:
+            random.seed(42)
+            cp_det = ChangePointDetector(threshold=6.0, slack=1.0, min_observations=30)
+            # Warmup
+            for _ in range(50):
+                cp_det.update(random.gauss(0, scale))
+
+            # Drift: +0.25 * scale per step
+            detected = False
+            for step_i in range(1, 40):
+                val = 0.25 * scale * step_i + random.gauss(0, scale)
+                if cp_det.update(val) is not None:
+                    detected = True
+                    break
+            if detected:
+                detected_count += 1
+
+        assert detected_count == len(scales), (
+            f"CUSUM failed to detect drift on some scales: {detected_count}/{len(scales)}"
+        )
+
     def test_changepoint_no_false_positives_on_pure_noise(self):
         import random
 
