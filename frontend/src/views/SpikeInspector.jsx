@@ -89,6 +89,29 @@ export default function SpikeInspector() {
     return globalWindow.find((r) => r.step === selectedSpike) || null
   }, [globalWindow, selectedSpike])
 
+  const diagnosis = useMemo(() => {
+    if (!centerRow) return null
+    if (centerRow.grad_nan_inf_ratio > 0) {
+      return {
+        type: 'NaN / Inf Gradient',
+        badgeClass: 'bg-red-500/20 text-red-400 border-red-500/30',
+        desc: 'Numerical instability detected: NaN/Inf gradient values present in parameters.',
+      }
+    }
+    if (centerRow.grad_norm_before_clip > 5.0) {
+      return {
+        type: 'Gradient Explosion',
+        badgeClass: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+        desc: 'Gradient norm experienced a sharp explosion exceeding typical baseline values.',
+      }
+    }
+    return {
+      type: 'Distributional Shift / Spike',
+      badgeClass: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+      desc: 'Significant loss anomaly detected by online change-point / z-score detector.',
+    }
+  }, [centerRow])
+
   if (spikes.length === 0) {
     return <EmptyState icon="⚡">No spikes recorded in this run.</EmptyState>
   }
@@ -96,25 +119,48 @@ export default function SpikeInspector() {
   return (
     <div className="space-y-5">
       <Card>
-        <div className="flex flex-wrap items-center gap-3">
-          <label htmlFor="spike-select" className="text-xs font-medium text-muted">
-            Spike
-          </label>
-          <select
-            id="spike-select"
-            value={selectedSpike ?? ''}
-            onChange={(e) => setSelectedSpike(Number(e.target.value))}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-accent"
-          >
-            <option value="">— select —</option>
-            {spikes.map((s) => (
-              <option key={s.step} value={s.step}>
-                Step {s.step}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <label htmlFor="spike-select" className="text-xs font-medium text-muted">
+              Select Spike Window
+            </label>
+            <select
+              id="spike-select"
+              value={selectedSpike ?? ''}
+              onChange={(e) => setSelectedSpike(Number(e.target.value))}
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-accent"
+            >
+              <option value="">— select —</option>
+              {spikes.map((s) => (
+                <option key={s.step} value={s.step}>
+                  Step {s.step}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {diagnosis && (
+            <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium ${diagnosis.badgeClass}`}>
+              <Zap className="h-4 w-4" />
+              <span>Root Cause Diagnosis: {diagnosis.type}</span>
+            </div>
+          )}
         </div>
       </Card>
+
+      {diagnosis && (
+        <Card className="border-l-4 border-l-accent bg-accent/5">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-accent">
+              <Activity className="h-4 w-4" />
+              Spike Story Narrative — Step {selectedSpike}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted leading-relaxed">
+            {diagnosis.desc} Inspect the pre/post spike window metrics below to isolate layer-level activation kurtosis and gradient norms.
+          </CardContent>
+        </Card>
+      )}
 
       {loading && (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -145,7 +191,7 @@ export default function SpikeInspector() {
 
             <Card>
               <CardHeader>
-                <CardTitle>Global window</CardTitle>
+                <CardTitle>Global Pre/Post Spike Window</CardTitle>
               </CardHeader>
               <CardContent>
                 <Chart
@@ -196,7 +242,7 @@ export default function SpikeInspector() {
               <Card>
                 <LayerSelect
                   id="spike-layer-select"
-                  label="Layer:"
+                  label="Target Layer:"
                   layers={layerNames}
                   value={selectedLayer}
                   onChange={setSelectedLayer}
