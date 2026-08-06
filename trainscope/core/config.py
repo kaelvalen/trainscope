@@ -246,7 +246,7 @@ class TrainScopeConfig:
         for key, value in os.environ.items():
             if not key.startswith(prefix) or key == f"{prefix}PROFILE":
                 continue
-            field_name = key[len(prefix):].lower()
+            field_name = key[len(prefix) :].lower()
             if field_name not in field_names:
                 continue
             overrides[field_name] = _coerce_value(field_name, value)
@@ -275,9 +275,7 @@ def load_config(path_or_dict: str | Path | dict[str, Any] | TrainScopeConfig) ->
     elif isinstance(path_or_dict, dict):
         data = dict(path_or_dict)
     else:
-        raise TypeError(
-            f"Expected Path, str, dict or TrainScopeConfig, got {type(path_or_dict)}"
-        )
+        raise TypeError(f"Expected Path, str, dict or TrainScopeConfig, got {type(path_or_dict)}")
 
     profile_name = data.pop("profile", None)
     base = PRESETS.get(profile_name, PRESETS["default"])() if profile_name else {}

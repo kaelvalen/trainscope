@@ -44,9 +44,7 @@ def make_detector(config: "TrainScopeConfig | dict | None" = None) -> AnomalyDet
     name = detector_cfg.pop("name", "z_score")
     cls = _REGISTRY.get(name)
     if cls is None:
-        raise ValueError(
-            f"Unknown detector '{name}'. Available: {', '.join(sorted(_REGISTRY))}"
-        )
+        raise ValueError(f"Unknown detector '{name}'. Available: {', '.join(sorted(_REGISTRY))}")
     return cls(**detector_cfg)
 
 

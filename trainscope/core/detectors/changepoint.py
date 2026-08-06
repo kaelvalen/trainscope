@@ -9,7 +9,7 @@ from trainscope.core.detectors.base import AnomalyDetector
 try:
     import ruptures as rpt
 except Exception:  # pragma: no cover
-    rpt = None  # type: ignore[assignment]
+    rpt = None
 
 
 class ChangePointDetector(AnomalyDetector):
@@ -87,7 +87,11 @@ class ChangePointDetector(AnomalyDetector):
             self._trim()
 
             if self._positive_cusum > self.threshold or abs(self._negative_cusum) > self.threshold:
-                score = self._positive_cusum if self._positive_cusum > abs(self._negative_cusum) else self._negative_cusum
+                score = (
+                    self._positive_cusum
+                    if self._positive_cusum > abs(self._negative_cusum)
+                    else self._negative_cusum
+                )
                 self._positive_cusum = 0.0
                 self._negative_cusum = 0.0
                 return float(score)

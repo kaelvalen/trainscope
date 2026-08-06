@@ -55,17 +55,18 @@ def _load_class(dotted_path: str) -> type:
     module = import_module(module_name)
     if not hasattr(module, class_name):
         raise ImportError(f"Module {module_name} has no attribute {class_name}")
-    return getattr(module, class_name)
+    cls: type = getattr(module, class_name)
+    return cls
 
 
-def _entry_point_classes(group_name: str, base_cls: type[T]) -> list[type[T]]:
-    classes: list[type[T]] = []
+def _entry_point_classes(group_name: str, base_cls: Any) -> list[Any]:
+    classes: list[Any] = []
     try:
-        eps = entry_points()
+        eps: Any = entry_points()
         try:
             group = eps.select(group=group_name)
         except AttributeError:
-            group = eps.get(group_name, [])
+            group = getattr(eps, "get", lambda k, default=None: [])(group_name, [])
     except Exception:
         return classes
 

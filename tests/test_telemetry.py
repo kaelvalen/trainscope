@@ -35,7 +35,10 @@ def test_requests_total_is_incremented(app):
 
     response = client.get("/metrics")
     assert response.status_code == 200
-    assert 'trainscope_requests_total{method="GET",path="/api/health",status_code="200"} 1.0' in response.text
+    assert (
+        'trainscope_requests_total{method="GET",path="/api/health",status_code="200"} 1.0'
+        in response.text
+    )
 
 
 def test_telemetry_metrics_are_registered():

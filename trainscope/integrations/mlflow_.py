@@ -51,7 +51,7 @@ class MlflowCallback:
             self._mlflow.log_metrics(metrics, step=step)
 
             if layer_snaps:
-                top_layer = max(
+                top_layer: tuple[Any, dict[str, Any]] = max(
                     layer_snaps.items(),
                     key=lambda item: item[1].get("grad_l2_norm", 0.0),
                     default=(None, {}),

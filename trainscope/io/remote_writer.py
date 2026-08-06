@@ -31,7 +31,7 @@ try:
     import fsspec
     import fsspec.core
 except Exception:  # pragma: no cover
-    fsspec = None  # type: ignore[assignment]
+    fsspec = None
 
 logger = logging.getLogger("trainscope")
 
@@ -61,9 +61,7 @@ class RemoteWriter:
         model_config: dict | None = None,
     ):
         if fsspec is None:
-            raise ImportError(
-                "RemoteWriter requires 'fsspec'. Install it with: pip install fsspec"
-            )
+            raise ImportError("RemoteWriter requires 'fsspec'. Install it with: pip install fsspec")
 
         self._uri = str(run_path)
         self._fs, self._path = fsspec.core.url_to_fs(self._uri)
@@ -174,9 +172,7 @@ class RemoteWriter:
     def _write_manifest(self):
         layer_files = {}
         for layer_name in self._layer_files:
-            layer_files[layer_name] = self._layer_path(layer_name).replace(
-                f"{self._path}/", ""
-            )
+            layer_files[layer_name] = self._layer_path(layer_name).replace(f"{self._path}/", "")
         manifest = {
             "last_step": self._last_step,
             "n_global_rows": self._n_global_rows + len(self._global_buffer),

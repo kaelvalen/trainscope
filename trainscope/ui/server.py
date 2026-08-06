@@ -120,9 +120,7 @@ async def _get_spike_steps(run_path: Path) -> set[int]:
     spikes_dir = run_path / "spikes"
     if not await anyio.to_thread.run_sync(spikes_dir.exists):
         return set()
-    files = await anyio.to_thread.run_sync(
-        lambda: sorted(spikes_dir.glob("spike_step_*.arrow"))
-    )
+    files = await anyio.to_thread.run_sync(lambda: sorted(spikes_dir.glob("spike_step_*.arrow")))
     steps: set[int] = set()
     for f in files:
         match = re.search(r"spike_step_(\d+)\.arrow", f.name)
@@ -379,25 +377,19 @@ def create_app(run_path: str) -> FastAPI:
                 while True:
                     global_rows = await _read_arrow(rp / "global.arrow")
                     if len(global_rows) > last_global_len:
-                        await websocket.send_json(
-                            {"type": "global", "payload": global_rows}
-                        )
+                        await websocket.send_json({"type": "global", "payload": global_rows})
                         last_global_len = len(global_rows)
 
                     spikes = await _get_spike_steps(rp)
                     new_spikes = spikes - last_spikes
                     if new_spikes:
                         for step in sorted(new_spikes):
-                            await websocket.send_json(
-                                {"type": "spike", "payload": {"step": step}}
-                            )
+                            await websocket.send_json({"type": "spike", "payload": {"step": step}})
                         last_spikes = spikes
 
                     layers = set(await _get_layers(rp))
                     if layers != last_layers:
-                        await websocket.send_json(
-                            {"type": "layers", "payload": sorted(layers)}
-                        )
+                        await websocket.send_json({"type": "layers", "payload": sorted(layers)})
                         last_layers = layers
 
                     await asyncio.sleep(1.0)
@@ -405,11 +397,11 @@ def create_app(run_path: str) -> FastAPI:
                 global_rows = await _read_arrow(rp / "global.arrow")
                 await websocket.send_json({"type": "global", "payload": global_rows})
 
-                spikes = [{"step": step} for step in await _get_spike_steps(rp)]
-                await websocket.send_json({"type": "spike", "payload": spikes})
+                spikes_payload = [{"step": step} for step in await _get_spike_steps(rp)]
+                await websocket.send_json({"type": "spike", "payload": spikes_payload})
 
-                layers = await _get_layers(rp)
-                await websocket.send_json({"type": "layers", "payload": layers})
+                layers_payload = await _get_layers(rp)
+                await websocket.send_json({"type": "layers", "payload": layers_payload})
 
                 while True:
                     await asyncio.sleep(5.0)
