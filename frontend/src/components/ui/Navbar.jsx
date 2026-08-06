@@ -1,8 +1,25 @@
 import { Activity, Menu, RefreshCw } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { LiveIndicator } from './LiveIndicator.jsx'
 import { Badge } from './Badge.jsx'
 import { Button } from './Button.jsx'
 import KeyboardShortcutsHelp from '../KeyboardShortcutsHelp.jsx'
+
+function UpdatedLabel({ timestamp }) {
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (!timestamp) return undefined
+    const interval = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(interval)
+  }, [timestamp])
+
+  if (!timestamp) return null
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000))
+  const label = seconds < 2 ? 'just now' : `${seconds}s ago`
+
+  return <span className="topbar-updated hidden lg:inline-flex">Updated {label}</span>
+}
 
 export function Navbar({
   runName,
@@ -13,13 +30,14 @@ export function Navbar({
   onRefresh,
   refreshing = false,
   sectionLabel,
+  lastUpdatedAt,
 }) {
   const eventCount = spikeEvents.length
   let badgeLabel = ''
   if (eventCount === 1) {
     const singleEv = spikeEvents[0]
     if (singleEv.earlyWarningWindow > 0) {
-      badgeLabel = `1 event (${singleEv.earlyWarningWindow}-step early warning)`
+      badgeLabel = `1 event (${singleEv.earlyWarningWindow}-step detection lead)`
     } else {
       badgeLabel = '1 spike event'
     }
@@ -67,6 +85,7 @@ export function Navbar({
           </Badge>
         )}
         <LiveIndicator status={liveStatus} />
+        <UpdatedLabel timestamp={lastUpdatedAt} />
         <Button
           variant="ghost"
           size="icon"

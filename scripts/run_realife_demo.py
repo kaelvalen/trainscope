@@ -2,20 +2,21 @@
 """
 TrainScope Real-Life End-to-End Showcase Script
 
-Trains a 4-layer Transformer model, simulates a multi-stage training failure cascade
-(Stable convergence -> Subtle Loss Drift -> Gradient Explosion -> NaN Collapse),
-saves full per-layer Arrow artifacts, and automatically launches the TrainScope UI server
-at http://localhost:7007 for live inspection and demo recording.
+Trains a 4-layer Transformer model through a reproducible, noisy stress process,
+saves full per-layer Arrow artifacts, and automatically launches the TrainScope UI
+server at http://localhost:7007 for live inspection and demo recording.
 
 Usage:
     python scripts/run_realife_demo.py
 """
 
 import os
+import random
+import signal
+import subprocess
 import sys
 import time
-import subprocess
-import signal
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -31,8 +32,6 @@ D_MODEL = 256
 N_HEADS = 8
 N_LAYERS = 4
 N_STEPS = 150
-DRIFT_START = 80
-SPIKE_STEP = 100
 LR = 1e-3
 
 
@@ -54,7 +53,7 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_heads, head).transpose(1, 2)
         k = k.view(B, T, self.n_heads, head).transpose(1, 2)
         v = v.view(B, T, self.n_heads, head).transpose(1, 2)
-        att = (q @ k.transpose(-2, -1)) / (head ** 0.5)
+        att = (q @ k.transpose(-2, -1)) / (head**0.5)
         att = att.masked_fill(self.mask[:, :, :T, :T] == 0, float("-inf"))
         att = F.softmax(att, dim=-1)
         y = (att @ v).transpose(1, 2).contiguous().view(B, T, C)
@@ -98,8 +97,26 @@ class TransformerLM(nn.Module):
         return self.head(h)
 
 
+def evolve_training_stress(stress: float, rng: random.Random) -> float:
+    """Advance a noisy latent stress process without a scripted failure step."""
+    return max(0.0, stress * 0.985 + rng.gauss(0.012, 0.018))
+
+
+def apply_training_stress(loss: torch.Tensor, stress: float) -> torch.Tensor:
+    """Model gradual distribution and optimizer instability as loss amplification."""
+    drift = max(0.0, stress - 0.18)
+    instability = max(0.0, drift - 0.35)
+    multiplier = (
+        1.0
+        + 0.25 * drift
+        + 1.2 * drift**2
+        + torch.expm1(torch.tensor(3.0 * instability, device=loss.device))
+    )
+    return loss * multiplier
+
+
 def free_port(port=7007):
-    import os, signal, socket
+    import socket
 
     current_pid = os.getpid()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -130,7 +147,8 @@ def main():
     config = TrainScopeConfig(
         run_dir=run_dir,
         run_name="realife_demo",
-        spike_threshold=3.5,
+        spike_threshold=10.0,
+        detector={"name": "changepoint", "threshold": 10.0, "slack": 1.0},
         stop_on_spike=False,
         full_resolution_window=500,
         histogram_every_n_steps=10,
@@ -164,6 +182,8 @@ def main():
     print("=" * 70)
 
     torch.manual_seed(42)
+    stress_rng = random.Random("realife-stress")
+    training_stress = 0.0
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     model = TransformerLM().to(device)
@@ -187,17 +207,10 @@ def main():
             logits = model(x)
             loss = F.cross_entropy(logits.view(-1, VOCAB), targets.view(-1))
 
-            # Phase 2: Inject gradual loss drift (Steps 80-99)
-            if DRIFT_START <= step < SPIKE_STEP:
-                loss = loss * (1.0 + 0.15 * (step - DRIFT_START + 1))
-
-            # Phase 3: Inject gradient explosion & spike (Step 100)
-            if step == SPIKE_STEP:
-                loss = loss * 100.0
-                # Induce gradient explosion in last block
-                for p in model.blocks[-1].parameters():
-                    if p.grad is not None:
-                        p.grad.data.mul_(50.0)
+            # The failure point emerges from cumulative noisy stress rather than
+            # from a hardcoded step. The detector only sees the resulting loss.
+            training_stress = evolve_training_stress(training_stress, stress_rng)
+            loss = apply_training_stress(loss, training_stress)
 
             loss.backward()
 

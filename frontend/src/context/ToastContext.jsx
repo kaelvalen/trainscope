@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { cn } from '../utils.js'
 
 const ToastContext = createContext(null)
+const MAX_VISIBLE_TOASTS = 3
 
 const variantStyles = {
   info: 'border-accent/30 bg-panel',
@@ -15,7 +16,7 @@ export function ToastProvider({ children }) {
 
   const addToast = useCallback((toast) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`
-    setToasts((prev) => [...prev, { ...toast, id }])
+    setToasts((prev) => [...prev, { ...toast, id }].slice(-MAX_VISIBLE_TOASTS))
   }, [])
 
   const dismissToast = useCallback((id) => {

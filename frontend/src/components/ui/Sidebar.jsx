@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { Activity, Menu, X } from 'lucide-react'
 import { Button } from './Button.jsx'
 import { LiveIndicator } from './LiveIndicator.jsx'
@@ -5,6 +6,23 @@ import { cn } from '../../utils.js'
 import { NAV_ITEMS } from '../../navigation.js'
 
 export function Sidebar({ activeIndex, onChange, mobileOpen, onClose, liveStatus, runName }) {
+  useEffect(() => {
+    if (!mobileOpen) return undefined
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') onClose?.()
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [mobileOpen, onClose])
+
   return (
     <>
       {mobileOpen && (

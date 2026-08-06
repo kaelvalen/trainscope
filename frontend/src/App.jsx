@@ -37,7 +37,8 @@ function LoadingSkeleton() {
 export default function App() {
   const [activeTab, setActiveTab] = useState(0)
   const [mobileOpen, setMobileOpen] = useState(false)
-  const { meta, spikes, spikeEvents, loading, error, refresh, isReady, liveStatus } = useRun()
+  const { meta, spikes, spikeEvents, loading, error, refresh, isReady, liveStatus, lastUpdatedAt } =
+    useRun()
   const activeView = NAV_ITEMS[activeTab] || NAV_ITEMS[0]
   const ActiveComponent = VIEW_COMPONENTS[activeView.id]
 
@@ -75,6 +76,7 @@ export default function App() {
           onRefresh={refresh}
           refreshing={loading}
           sectionLabel={activeView.label}
+          lastUpdatedAt={lastUpdatedAt}
         />
 
         <main className="app-content" aria-busy={loading}>

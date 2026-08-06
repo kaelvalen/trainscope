@@ -82,7 +82,7 @@ function createSpikeEvent(groupItems, index) {
   if (startStep === endStep) {
     label = `Step ${startStep}`
   } else if (earlyWarningWindow > 0) {
-    label = `Steps ${startStep}–${endStep} (${earlyWarningWindow}-step early warning)`
+    label = `Steps ${startStep}–${endStep} (${earlyWarningWindow}-step detection lead)`
   } else {
     label = `Steps ${startStep}–${endStep}`
   }
@@ -142,7 +142,7 @@ export function buildSpikeClusterShapes(events = [], options = {}) {
         },
       })
 
-      // Early Warning Trigger line (Start Step)
+      // First detected anomaly line (Start Step)
       shapes.push({
         type: 'line',
         xref: 'x',
@@ -195,7 +195,7 @@ export function buildSpikeClusterAnnotations(events = [], _options = {}) {
     if (isSingle) {
       text = `⚡ Spike @ Step ${event.startStep}`
     } else if (event.earlyWarningWindow > 0) {
-      text = `⚡ Early Warning Window (Steps ${event.startStep}–${event.endStep})`
+      text = `⚡ Detected Anomaly Window (Steps ${event.startStep}–${event.endStep})`
     } else {
       text = `⚡ Spike Window (Steps ${event.startStep}–${event.endStep})`
     }

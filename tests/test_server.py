@@ -156,7 +156,8 @@ def test_meta_missing(tmp_path):
     empty.mkdir()
     c = TestClient(create_app(str(empty)))
     r = c.get("/api/meta")
-    assert r.status_code == 404
+    assert r.status_code == 200
+    assert r.json()["model_name"] == "Training in progress..."
 
 
 def test_global(client):
@@ -164,6 +165,67 @@ def test_global(client):
     assert r.status_code == 200
     assert len(r.json()) == 5
     assert r.json()[3]["is_spike"] is True
+
+
+def test_websocket_streams_global_rows_after_empty_start(tmp_path):
+    run = tmp_path / "live"
+    run.mkdir()
+
+    row = {
+        "step": 0,
+        "loss": 1.0,
+        "grad_norm_before_clip": 0.5,
+        "grad_norm_after_clip": 0.5,
+        "lr": 0.001,
+        "optimizer_v_norm": 0.0,
+        "step_time_ms": 1.0,
+        "batch_index": 0,
+        "is_spike": False,
+        "cpu_memory_mb": 0.0,
+        "cuda_memory_mb": 0.0,
+    }
+
+    with TestClient(create_app(str(run))) as live_client:
+        with live_client.websocket_connect("/ws") as websocket:
+            assert websocket.receive_json()["type"] == "meta"
+            _write_arrow(run / "global.arrow", GLOBAL_SCHEMA, [row])
+
+            message = websocket.receive_json()
+            assert message["type"] == "global"
+            assert message["payload"] == [row]
+
+
+def test_websocket_streams_only_new_global_rows(tmp_path):
+    run = tmp_path / "live"
+    run.mkdir()
+
+    def row(step):
+        return {
+            "step": step,
+            "loss": 1.0 + step,
+            "grad_norm_before_clip": 0.5,
+            "grad_norm_after_clip": 0.5,
+            "lr": 0.001,
+            "optimizer_v_norm": 0.0,
+            "step_time_ms": 1.0,
+            "batch_index": step,
+            "is_spike": False,
+            "cpu_memory_mb": 0.0,
+            "cuda_memory_mb": 0.0,
+        }
+
+    with TestClient(create_app(str(run))) as live_client:
+        with live_client.websocket_connect("/ws") as websocket:
+            assert websocket.receive_json()["type"] == "meta"
+            _write_arrow(run / "global.arrow", GLOBAL_SCHEMA, [row(0), row(1)])
+            initial = websocket.receive_json()
+            assert initial["type"] == "global"
+            assert [item["step"] for item in initial["payload"]] == [0, 1]
+
+            _write_arrow(run / "global.arrow", GLOBAL_SCHEMA, [row(0), row(1), row(2)])
+            delta = websocket.receive_json()
+            assert delta["type"] == "global_delta"
+            assert [item["step"] for item in delta["payload"]] == [2]
 
 
 def test_layers(client):

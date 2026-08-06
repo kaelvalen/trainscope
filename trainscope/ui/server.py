@@ -14,8 +14,7 @@ import anyio
 import pyarrow.ipc as ipc
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, FileResponse, Response
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger("trainscope")
@@ -54,17 +53,22 @@ def _variance(values: list[float]) -> float:
 def _read_arrow_sync(path: Path) -> list[dict]:
     """Read an Arrow IPC file into a list of row dicts.
 
-    Uses a context manager so the reader is closed explicitly even on older
-    PyArrow versions where ``RecordBatchFileReader.close()`` is not exposed.
+    Closes the reader when the installed PyArrow version exposes ``close()``.
     Gracefully handles in-flight writes when file footers are incomplete.
     """
     if not path.exists() or path.stat().st_size == 0:
         return []
     try:
-        with ipc.open_file(str(path)) as reader:
+        reader = ipc.open_file(str(path))
+        try:
             table = reader.read_all()
-    except Exception:
-        # File is being concurrently written or has an incomplete footer/stream
+        finally:
+            close = getattr(reader, "close", None)
+            if callable(close):
+                close()
+    except Exception as exc:
+        # File is being concurrently replaced or has an incomplete footer.
+        logger.debug("Transient error reading Arrow file %s: %s", path, exc)
         return []
 
     raw = table.to_pydict()
@@ -207,6 +211,13 @@ def create_app(run_path: str) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def disable_api_cache(request, call_next):
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:

@@ -182,6 +182,37 @@ class TestChangePointDetector:
             f"Expected CUSUM ({cp_step_detected}) to trigger earlier than ZScore ({z_step_detected})"
         )
 
+    def test_changepoint_detects_accumulating_stress_before_loss_peak(self):
+        """Detect a noisy, cumulative failure process without a scripted spike step."""
+        import random
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        rng = random.Random("noisy-training-run")
+        detector = ChangePointDetector(threshold=10.0, slack=1.0, min_observations=30)
+        stress = 0.0
+        losses: list[float] = []
+        detection_steps: list[int] = []
+
+        for step in range(180):
+            # Model optimizer/data stress behaves like a noisy process: small
+            # shocks accumulate, decay, and eventually amplify the loss.
+            stress = max(0.0, stress * 0.985 + rng.gauss(0.012, 0.018))
+            drift = max(0.0, stress - 0.18)
+            loss = (1.0 + rng.gauss(0.0, 0.05)) * (
+                1.0 + 0.25 * drift + 1.2 * drift**2 + 4.0 * max(0.0, drift - 0.45) ** 3
+            )
+            losses.append(loss)
+
+            if detector.update(loss) is not None:
+                detection_steps.append(step)
+
+        assert detection_steps, "CUSUM failed to detect the accumulating stress"
+        peak_step = max(range(len(losses)), key=losses.__getitem__)
+        first_detection = detection_steps[0]
+        assert first_detection < peak_step
+        assert peak_step - first_detection >= 10
+
     def test_changepoint_sensitivity_across_scales(self):
         """Verify CUSUM sensitivity (true positive rate) across 5 different noise scales."""
         import random

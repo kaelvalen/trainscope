@@ -6,6 +6,31 @@ import { useToast } from './context/ToastContext.jsx'
 import { groupSpikes } from './utils/spikeCluster.js'
 
 const RunContext = createContext(null)
+const LIVE_RECONCILE_INTERVAL_MS = 3000
+
+function sameRows(previous, next) {
+  if (previous.length !== next.length) return false
+  return previous.every((row, index) => {
+    const other = next[index]
+    return (
+      row.step === other?.step &&
+      row.loss === other?.loss &&
+      row.grad_norm_before_clip === other?.grad_norm_before_clip &&
+      row.is_spike === other?.is_spike
+    )
+  })
+}
+
+function sameValues(previous, next) {
+  return previous.length === next.length && previous.every((value, index) => value === next[index])
+}
+
+function sameSpikes(previous, next) {
+  return (
+    previous.length === next.length &&
+    previous.every((spike, index) => spike.step === next[index]?.step)
+  )
+}
 
 export function useRun() {
   const ctx = useContext(RunContext)
@@ -31,9 +56,10 @@ export function RunProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [liveStatus, setLiveStatus] = useState('connecting')
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null)
 
-  const initialLoadComplete = useRef(false)
   const toastedStepsRef = useRef(new Set())
+  const lastNotifiedSpikeStepRef = useRef(null)
 
   const load = useCallback(async ({ silent = false } = {}) => {
     if (!silent) {
@@ -43,16 +69,43 @@ export function RunProvider({ children }) {
 
     try {
       const [metaData, gData, names, spikeList] = await Promise.all([
-        fetchMeta(),
+        silent ? Promise.resolve(null) : fetchMeta(),
         fetchGlobal(),
         fetchLayers(),
         fetchSpikes(),
       ])
-      setMeta(metaData)
-      setGlobalData(Array.isArray(gData) ? gData : [])
-      setLayerNames(Array.isArray(names) ? names : [])
-      setSpikes(Array.isArray(spikeList) ? spikeList : [])
-      initialLoadComplete.current = true
+      if (!silent) setMeta(metaData)
+      const nextGlobalData = Array.isArray(gData) ? gData : []
+      const nextLayerNames = Array.isArray(names) ? names : []
+      const nextSpikes = Array.isArray(spikeList) ? spikeList : []
+
+      // An Arrow file can be momentarily unavailable while it is being
+      // replaced. Keep the last good snapshot instead of turning the live
+      // dashboard into an empty state during that short window.
+      setGlobalData((previous) => {
+        if (previous.length === 0 || nextGlobalData.length >= previous.length) {
+          return sameRows(previous, nextGlobalData) ? previous : nextGlobalData
+        }
+
+        // A response that started before the latest socket delta can be
+        // shorter than the current state. Merge it without rolling the chart
+        // back to an older snapshot.
+        const rowsByStep = new Map(previous.map((row) => [row.step, row]))
+        for (const row of nextGlobalData) {
+          if (row && row.step != null) rowsByStep.set(row.step, row)
+        }
+        const mergedRows = [...rowsByStep.values()].sort((a, b) => a.step - b.step)
+        return sameRows(previous, mergedRows) ? previous : mergedRows
+      })
+      setLayerNames((previous) => {
+        if (previous.length > 0 && nextLayerNames.length === 0) return previous
+        return sameValues(previous, nextLayerNames) ? previous : nextLayerNames
+      })
+      setSpikes((previous) => {
+        if (previous.length > 0 && nextSpikes.length === 0) return previous
+        return sameSpikes(previous, nextSpikes) ? previous : nextSpikes
+      })
+      if (!silent) setLastUpdatedAt(Date.now())
     } catch (err) {
       if (err.name !== 'AbortError') {
         setError(err?.message || 'Failed to load run data.')
@@ -80,36 +133,52 @@ export function RunProvider({ children }) {
           setMeta(message.payload)
           break
         case 'global':
-          setGlobalData(Array.isArray(message.payload) ? message.payload : [])
+          setLastUpdatedAt(Date.now())
+          setGlobalData((previous) => {
+            const nextRows = Array.isArray(message.payload) ? message.payload : []
+            if (previous.length > 0 && nextRows.length === 0) return previous
+            return sameRows(previous, nextRows) ? previous : nextRows
+          })
           break
         case 'global_delta':
+          setLastUpdatedAt(Date.now())
           setGlobalData((prev) => {
             const newRows = Array.isArray(message.payload) ? message.payload : []
             if (newRows.length === 0) return prev
-            const existingSteps = new Set(prev.map((r) => r.step))
-            const filtered = newRows.filter((r) => !existingSteps.has(r.step))
-            return [...prev, ...filtered]
+            const rowsByStep = new Map(prev.map((row) => [row.step, row]))
+            for (const row of newRows) {
+              if (row && row.step != null) rowsByStep.set(row.step, row)
+            }
+            return [...rowsByStep.values()].sort((a, b) => a.step - b.step)
           })
           break
         case 'layers':
-          setLayerNames(Array.isArray(message.payload) ? message.payload : [])
+          setLayerNames((previous) => {
+            const nextLayers = Array.isArray(message.payload) ? message.payload : []
+            return sameValues(previous, nextLayers) ? previous : nextLayers
+          })
           break
         case 'spike': {
           const spike = message.payload
           if (!spike || typeof spike !== 'object') break
+          setLastUpdatedAt(Date.now())
           setSpikes((prev) => {
             if (prev.some((s) => s.step === spike.step)) return prev
             return [...prev, spike].sort((a, b) => a.step - b.step)
           })
-          // A WebSocket reconnect resends every spike detected so far (the
-          // server has no notion of what this specific connection already
-          // saw), so toast at most once per step per session or every
-          // reconnect re-floods the toast stack with the full backlog.
+          // The server emits one message per detected step. Notify once for a
+          // contiguous anomaly window instead of flooding the toast stack.
           if (!toastedStepsRef.current.has(spike.step)) {
             toastedStepsRef.current.add(spike.step)
+            const previousStep = lastNotifiedSpikeStepRef.current
+            const startsNewEvent = previousStep == null || spike.step - previousStep > 5
+            lastNotifiedSpikeStepRef.current = Math.max(previousStep ?? spike.step, spike.step)
+
+            if (!startsNewEvent) break
+
             addToast({
-              title: 'Spike detected',
-              message: `Anomaly at step ${spike.step}`,
+              title: 'Spike event detected',
+              message: `Anomaly window starts at step ${spike.step}`,
               variant: 'danger',
             })
           }
@@ -125,19 +194,23 @@ export function RunProvider({ children }) {
   useWebSocket({
     onMessage: handleWebSocketMessage,
     onStatusChange: setLiveStatus,
-    enabled: initialLoadComplete.current || !loading,
+    // Connect immediately so a run that starts with an empty Arrow file can
+    // still push its first batch into the UI without requiring a refresh.
+    enabled: true,
   })
 
-  // Fallback to REST polling when the WebSocket is unavailable.
+  // Reconcile periodically even while connected so a missed delta or a
+  // reconnect cannot leave the chart stuck on the first streamed batch.
   const poll = useCallback(() => {
     load({ silent: true })
   }, [load])
 
   useEffect(() => {
-    if (liveStatus !== 'unavailable') return undefined
-    const interval = window.setInterval(poll, 1500)
+    if (loading) return undefined
+    const intervalMs = liveStatus === 'connected' ? LIVE_RECONCILE_INTERVAL_MS : 1500
+    const interval = window.setInterval(poll, intervalMs)
     return () => window.clearInterval(interval)
-  }, [liveStatus, poll])
+  }, [liveStatus, loading, poll])
 
   const spikeEvents = useMemo(() => groupSpikes(globalData, spikes), [globalData, spikes])
 
@@ -153,8 +226,20 @@ export function RunProvider({ children }) {
       refresh: () => load(),
       isReady: !loading && !error && meta != null,
       liveStatus,
+      lastUpdatedAt,
     }),
-    [meta, globalData, layerNames, spikes, spikeEvents, loading, error, load, liveStatus]
+    [
+      meta,
+      globalData,
+      layerNames,
+      spikes,
+      spikeEvents,
+      loading,
+      error,
+      load,
+      liveStatus,
+      lastUpdatedAt,
+    ]
   )
 
   return <RunContext.Provider value={value}>{children}</RunContext.Provider>

@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { GitCompare } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { ArrowLeftRight, GitCompare } from 'lucide-react'
+import { useRun } from '../RunContext.jsx'
 import { fetchDiff } from '../api.js'
 import { truncateLayerName, CHART_COLORS } from '../theme.js'
 import Chart from '../components/Chart.jsx'
@@ -13,6 +14,7 @@ import { Badge } from '../components/ui/Badge.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
 
 export default function DiffView() {
+  const { globalData } = useRun()
   const [stepA, setStepA] = useState('')
   const [stepB, setStepB] = useState('')
   const [diffData, setDiffData] = useState([])
@@ -20,11 +22,25 @@ export default function DiffView() {
   const [error, setError] = useState(null)
   const [compared, setCompared] = useState(null)
 
+  const availableSteps = globalData.map((row) => row.step)
+  const latestStep = availableSteps[availableSteps.length - 1]
+  const previousStep = availableSteps[availableSteps.length - 2] ?? latestStep
+
+  useEffect(() => {
+    if (latestStep == null) return
+    setStepA((value) => (value === '' ? String(previousStep ?? latestStep) : value))
+    setStepB((value) => (value === '' ? String(latestStep) : value))
+  }, [latestStep, previousStep])
+
   async function handleCompare() {
     const a = parseInt(stepA, 10)
     const b = parseInt(stepB, 10)
     if (Number.isNaN(a) || Number.isNaN(b)) {
       setError('Please enter valid step numbers.')
+      return
+    }
+    if (a === b) {
+      setError('Choose two different steps to compare.')
       return
     }
     setError(null)
@@ -42,6 +58,18 @@ export default function DiffView() {
 
   function handleKeyDown(e) {
     if (e.key === 'Enter') handleCompare()
+  }
+
+  function setComparison(a, b) {
+    if (a == null || b == null) return
+    setStepA(String(a))
+    setStepB(String(b))
+    setError(null)
+  }
+
+  function handleSwap() {
+    setStepA(stepB)
+    setStepB(stepA)
   }
 
   const layers = diffData.map((d) => d.layer)
@@ -77,6 +105,7 @@ export default function DiffView() {
               <input
                 id="diff-step-a"
                 type="number"
+                min="0"
                 value={stepA}
                 onChange={(e) => setStepA(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -92,6 +121,7 @@ export default function DiffView() {
               <input
                 id="diff-step-b"
                 type="number"
+                min="0"
                 value={stepB}
                 onChange={(e) => setStepB(e.target.value)}
                 onKeyDown={handleKeyDown}
@@ -102,6 +132,35 @@ export default function DiffView() {
 
             <Button onClick={handleCompare} disabled={loading} className="min-w-[7.5rem]">
               {loading ? 'Comparing…' : 'Compare'}
+            </Button>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="control-hint">Quick compare</span>
+            <Button
+              variant="muted"
+              size="sm"
+              onClick={() => setComparison(previousStep, latestStep)}
+              disabled={latestStep == null || previousStep == null || previousStep === latestStep}
+            >
+              Latest pair
+            </Button>
+            <Button
+              variant="muted"
+              size="sm"
+              onClick={() => setComparison(availableSteps[0], latestStep)}
+              disabled={availableSteps.length < 2}
+            >
+              First vs latest
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSwap}
+              disabled={!stepA || !stepB}
+              title="Swap steps"
+            >
+              <ArrowLeftRight className="h-3.5 w-3.5" />
+              Swap
             </Button>
           </div>
         </CardContent>

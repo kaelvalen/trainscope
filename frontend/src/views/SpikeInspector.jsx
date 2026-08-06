@@ -152,7 +152,7 @@ export default function SpikeInspector() {
 
     let narrative = `Chronological Failure Cascade: ${cascadePath}.`
     if (currentEvent && currentEvent.earlyWarningWindow > 0) {
-      narrative += ` TrainScope provided a ${currentEvent.earlyWarningWindow}-step early warning window before peak loss at Step ${currentEvent.peakStep}.`
+      narrative += ` The detected anomaly window began ${currentEvent.earlyWarningWindow} steps before the highest observed loss at Step ${currentEvent.peakStep}.`
     }
 
     return {
@@ -176,7 +176,7 @@ export default function SpikeInspector() {
           <div>
             <CardTitle>Select an anomaly event</CardTitle>
             <p className="chart-card__description">
-              Start at the early warning trigger or jump straight to the peak step.
+              Start at the first detection or jump straight to the peak step.
             </p>
           </div>
           {diagnosis && (
@@ -201,12 +201,10 @@ export default function SpikeInspector() {
               {spikeEvents.length > 0
                 ? spikeEvents.map((ev) => (
                     <optgroup key={ev.id} label={ev.label}>
-                      <option value={ev.startStep}>
-                        Step {ev.startStep} (Early Warning Trigger)
-                      </option>
+                      <option value={ev.startStep}>Step {ev.startStep} (First Detection)</option>
                       {ev.peakStep !== ev.startStep && (
                         <option value={ev.peakStep}>
-                          Step {ev.peakStep} (Peak Loss Explosion)
+                          Step {ev.peakStep} (Highest Observed Loss)
                         </option>
                       )}
                     </optgroup>
