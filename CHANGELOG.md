@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - Observability UI and Live Run UX
+
+### Added
+- Redesigned responsive React UI with a shared navigation, card, chart, metric, and control system.
+- Layer metric tabs and searchable layer selection for faster drill-down workflows.
+- Quick step presets and step swapping in Diff View.
+- Selectable anomaly windows and live data freshness indicators in Timeline.
+- Regression coverage for live WebSocket snapshots, deltas, and initially empty runs.
+
+### Changed
+- Live run data now reconciles periodically without reloading or resetting the page.
+- Transient Arrow reads and stale REST snapshots no longer erase current dashboard data.
+- Spike notifications are grouped by anomaly window and capped to prevent toast flooding.
+- The real-life demo uses a reproducible noisy stress process instead of fixed drift/spike steps.
+
 ## [0.3.0] - CUSUM Detection, WandB Integration, Spike Story & Live Streaming
 
 ### Added

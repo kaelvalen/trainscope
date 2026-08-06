@@ -33,6 +33,7 @@ export default function LayerDrilldown() {
   const [selectedLayer, setSelectedLayer] = useState('')
   const [layerData, setLayerData] = useState([])
   const [scrubStep, setScrubStep] = useState(null)
+  const [activeMetric, setActiveMetric] = useState('gradient')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
 
@@ -105,6 +106,34 @@ export default function LayerDrilldown() {
     return { histCounts: counts, histColors: colors, binLabels: labels }
   }, [scrubRow])
 
+  const metricConfig = {
+    gradient: {
+      label: 'Gradient L2',
+      title: 'Gradient L2 norm',
+      description: 'Magnitude of the layer update signal over time.',
+      name: 'Grad L2 Norm',
+      values: gradNorms,
+      color: CHART_COLORS.gradNorm,
+    },
+    weight: {
+      label: 'Weight L2',
+      title: 'Weight L2 norm',
+      description: 'Weight magnitude can expose slow parameter drift or runaway updates.',
+      name: 'Weight L2 Norm',
+      values: weightNorms,
+      color: CHART_COLORS.weight,
+    },
+    kurtosis: {
+      label: 'Activation kurtosis',
+      title: 'Activation kurtosis',
+      description: 'Excess kurtosis is an early signal for heavy-tailed activations.',
+      name: 'Activation Kurtosis',
+      values: kurtosisValues,
+      color: CHART_COLORS.kurtosis,
+    },
+  }
+  const selectedMetric = metricConfig[activeMetric]
+
   if (layerNames.length === 0) {
     return (
       <EmptyState icon={<Search className="h-5 w-5" />}>
@@ -173,72 +202,50 @@ export default function LayerDrilldown() {
             />
           </div>
 
-          <ChartCard
-            title="Gradient L2 norm"
-            description="Magnitude of the layer update signal over time."
-          >
-            <Chart
-              data={[
-                {
-                  x: steps,
-                  y: gradNorms,
-                  type: 'scatter',
-                  mode: 'lines',
-                  name: 'Grad L2 Norm',
-                  line: { color: CHART_COLORS.gradNorm, width: 1.5 },
-                },
-              ]}
-              layout={{ height: 240, uirevision: `layer-${selectedLayer}-grad` }}
-            />
-          </ChartCard>
+          <div className="metric-tabs" role="tablist" aria-label="Layer metrics">
+            <span className="metric-tabs__label">Signal</span>
+            {Object.entries(metricConfig).map(([key, metric]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={activeMetric === key}
+                className={activeMetric === key ? 'metric-tab is-active' : 'metric-tab'}
+                onClick={() => setActiveMetric(key)}
+              >
+                {metric.label}
+              </button>
+            ))}
+          </div>
 
-          <ChartCard
-            title="Weight L2 norm"
-            description="Weight magnitude can expose slow parameter drift or runaway updates."
-          >
+          <ChartCard title={selectedMetric.title} description={selectedMetric.description}>
             <Chart
               data={[
                 {
                   x: steps,
-                  y: weightNorms,
+                  y: selectedMetric.values,
                   type: 'scatter',
                   mode: 'lines',
-                  name: 'Weight L2 Norm',
-                  line: { color: CHART_COLORS.weight, width: 1.5 },
-                },
-              ]}
-              layout={{ height: 240, uirevision: `layer-${selectedLayer}-weight` }}
-            />
-          </ChartCard>
-
-          <ChartCard
-            title="Activation kurtosis"
-            description="Excess kurtosis is an early signal for heavy-tailed activations."
-          >
-            <Chart
-              data={[
-                {
-                  x: steps,
-                  y: kurtosisValues,
-                  type: 'scatter',
-                  mode: 'lines',
-                  name: 'Activation Kurtosis',
-                  line: { color: CHART_COLORS.kurtosis, width: 1.5 },
+                  name: selectedMetric.name,
+                  line: { color: selectedMetric.color, width: 1.5 },
                 },
               ]}
               layout={{
-                height: 240,
-                shapes: [
-                  {
-                    type: 'line',
-                    x0: steps[0],
-                    x1: steps[steps.length - 1],
-                    y0: 0,
-                    y1: 0,
-                    line: { color: CHART_COLORS.muted, width: 1, dash: 'dot' },
-                  },
-                ],
-                uirevision: `layer-${selectedLayer}-kurtosis`,
+                height: 300,
+                shapes:
+                  activeMetric === 'kurtosis'
+                    ? [
+                        {
+                          type: 'line',
+                          x0: steps[0],
+                          x1: steps[steps.length - 1],
+                          y0: 0,
+                          y1: 0,
+                          line: { color: CHART_COLORS.muted, width: 1, dash: 'dot' },
+                        },
+                      ]
+                    : [],
+                uirevision: `layer-${selectedLayer}-${activeMetric}`,
               }}
             />
           </ChartCard>

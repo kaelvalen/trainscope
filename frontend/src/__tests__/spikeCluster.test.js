@@ -11,7 +11,7 @@ describe('spikeCluster utils', () => {
     expect(groupSpikes([{ step: 0, is_spike: false }])).toEqual([])
   })
 
-  it('groups consecutive raw spike detections into a single event with early warning window', () => {
+  it('groups consecutive raw spike detections into a single event with detection lead', () => {
     const globalData = []
     // 150 steps, step 80 to 99 drifting, step 100 peak
     for (let i = 0; i <= 150; i++) {
@@ -32,7 +32,7 @@ describe('spikeCluster utils', () => {
     expect(ev.count).toBe(21)
     expect(ev.peakStep).toBe(100)
     expect(ev.earlyWarningWindow).toBe(20)
-    expect(ev.label).toContain('20-step early warning')
+    expect(ev.label).toContain('20-step detection lead')
   })
 
   it('handles multiple separate spike events', () => {
@@ -68,7 +68,7 @@ describe('spikeCluster utils', () => {
         count: 21,
         peakStep: 100,
         earlyWarningWindow: 20,
-        label: 'Steps 80–100 (20-step early warning)',
+        label: 'Steps 80–100 (20-step detection lead)',
       },
     ]
 
@@ -80,7 +80,7 @@ describe('spikeCluster utils', () => {
 
     const annotations = buildSpikeClusterAnnotations(events)
     expect(annotations.length).toBe(1) // ONLY 1 clean annotation instead of 21
-    expect(annotations[0].text).toContain('Early Warning Window (Steps 80–100)')
+    expect(annotations[0].text).toContain('Detected Anomaly Window (Steps 80–100)')
     expect(annotations[0].x).toBe(90)
   })
 })

@@ -11,6 +11,7 @@ import { Skeleton } from '../components/ui/Skeleton.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
 import { ChartCard } from '../components/ui/ChartCard.jsx'
 import { Card, CardContent } from '../components/ui/Card.jsx'
+import { Badge } from '../components/ui/Badge.jsx'
 import { Activity, BarChart3, TrendingDown, Activity as Pulse, Zap } from 'lucide-react'
 
 function buildZoomLayout(extra = {}) {
@@ -19,6 +20,61 @@ function buildZoomLayout(extra = {}) {
     xaxis: { rangeslider: { visible: false }, ...extra.xaxis },
     ...extra,
   }
+}
+
+function AnomalyRail({ events, onSelect }) {
+  if (events.length === 0) return null
+
+  const visibleEvents = events.slice(-6)
+
+  return (
+    <Card className="anomaly-rail">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <h2 className="text-sm font-semibold text-foreground">Detected anomaly windows</h2>
+          <p className="chart-card__description">
+            Select a window to move the scrubber to its first detected step.
+          </p>
+        </div>
+        <Badge variant="danger">
+          {events.length} {events.length === 1 ? 'event' : 'events'}
+        </Badge>
+      </div>
+      <div className="anomaly-rail__items">
+        {visibleEvents.map((event, index) => {
+          const rangeLabel =
+            event.startStep === event.endStep
+              ? `Step ${event.startStep}`
+              : `Steps ${event.startStep}–${event.endStep}`
+          const leadLabel =
+            event.earlyWarningWindow > 0
+              ? `+${event.earlyWarningWindow} to peak`
+              : `Peak ${event.peakStep}`
+
+          return (
+            <button
+              key={event.id}
+              type="button"
+              className="anomaly-chip"
+              onClick={() => onSelect(event.startStep)}
+              aria-label={`Inspect anomaly ${rangeLabel}`}
+            >
+              <span className="anomaly-chip__index">
+                {String(events.length - visibleEvents.length + index + 1).padStart(2, '0')}
+              </span>
+              <span className="anomaly-chip__body">
+                <span className="anomaly-chip__range">{rangeLabel}</span>
+                <span className="anomaly-chip__meta">
+                  {event.count} detection{event.count === 1 ? '' : 's'} · peak {event.peakStep}
+                </span>
+              </span>
+              <span className="anomaly-chip__lead">{leadLabel}</span>
+            </button>
+          )
+        })}
+      </div>
+    </Card>
+  )
 }
 
 export default function Timeline() {
@@ -94,7 +150,7 @@ export default function Timeline() {
       if (ev.earlyWarningWindow > 0) {
         return {
           value: '1 event',
-          subtitle: `${ev.earlyWarningWindow}-step early warning (Step ${ev.startStep} → ${ev.endStep})`,
+          subtitle: `${ev.earlyWarningWindow}-step detection lead (Step ${ev.startStep} → ${ev.endStep})`,
         }
       }
       return {
@@ -169,56 +225,60 @@ export default function Timeline() {
         />
       </div>
 
+      <AnomalyRail events={spikeEvents} onSelect={setScrubStep} />
+
       <ErrorMessage message={error} />
 
-      <ChartCard
-        title="Training loss"
-        description="Loss trajectory with grouped anomaly windows and the current scrub position."
-      >
-        <Chart
-          data={[
-            {
-              x: steps,
-              y: losses,
-              type: 'scatter',
-              mode: 'lines',
-              name: 'Loss',
-              line: { color: CHART_COLORS.loss, width: 1.5 },
-            },
-          ]}
-          layout={buildZoomLayout({
-            height: 320,
-            shapes: [...spikeShapes, ...scrubShapes],
-            annotations: spikeAnnotations,
-            uirevision: 'timeline-loss',
-          })}
-          config={{ scrollZoom: true }}
-        />
-      </ChartCard>
+      <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
+        <ChartCard
+          title="Training loss"
+          description="Loss trajectory with grouped anomaly windows and the current scrub position."
+        >
+          <Chart
+            data={[
+              {
+                x: steps,
+                y: losses,
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Loss',
+                line: { color: CHART_COLORS.loss, width: 1.5 },
+              },
+            ]}
+            layout={buildZoomLayout({
+              height: 320,
+              shapes: [...spikeShapes, ...scrubShapes],
+              annotations: spikeAnnotations,
+              uirevision: 'timeline-loss',
+            })}
+            config={{ scrollZoom: true }}
+          />
+        </ChartCard>
 
-      <ChartCard
-        title="Global gradient norm"
-        description="Pre-clip gradient magnitude makes sudden update instability easier to isolate."
-      >
-        <Chart
-          data={[
-            {
-              x: steps,
-              y: gradNorms,
-              type: 'scatter',
-              mode: 'lines',
-              name: 'Grad Norm',
-              line: { color: CHART_COLORS.gradNorm, width: 1.5 },
-            },
-          ]}
-          layout={buildZoomLayout({
-            height: 280,
-            shapes: [...spikeShapes, ...scrubShapes],
-            uirevision: 'timeline-grad',
-          })}
-          config={{ scrollZoom: true }}
-        />
-      </ChartCard>
+        <ChartCard
+          title="Global gradient norm"
+          description="Pre-clip gradient magnitude makes sudden update instability easier to isolate."
+        >
+          <Chart
+            data={[
+              {
+                x: steps,
+                y: gradNorms,
+                type: 'scatter',
+                mode: 'lines',
+                name: 'Grad Norm',
+                line: { color: CHART_COLORS.gradNorm, width: 1.5 },
+              },
+            ]}
+            layout={buildZoomLayout({
+              height: 280,
+              shapes: [...spikeShapes, ...scrubShapes],
+              uirevision: 'timeline-grad',
+            })}
+            config={{ scrollZoom: true }}
+          />
+        </ChartCard>
+      </div>
 
       <StepScrubber steps={steps} value={scrubStep} onChange={setScrubStep} />
 
