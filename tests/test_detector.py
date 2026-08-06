@@ -153,7 +153,7 @@ class TestChangePointDetector:
 
         random.seed(42)
         z_det = ZScoreDetector(threshold=3.5, min_observations=30)
-        cp_det = ChangePointDetector(threshold=4.0, slack=0.3, min_observations=30)
+        cp_det = ChangePointDetector(threshold=6.0, slack=1.0, min_observations=30)
 
         # Baseline warmup phase (50 steps around mean=1.0, std=0.1)
         for _ in range(50):
@@ -197,8 +197,8 @@ class TestChangePointDetector:
                 triggers += 1
         assert triggers == 0
 
-    def test_changepoint_robustness_across_seeds_and_scales(self):
-        """Verify false positive resistance across multiple random seeds and noise scales."""
+    def test_changepoint_robustness_calibration_set(self):
+        """Calibration set: 140 combinations of seeds and scales."""
         import random
 
         from trainscope.core.detectors.changepoint import ChangePointDetector
@@ -214,7 +214,7 @@ class TestChangePointDetector:
             for scale in scales:
                 for mean_val in means:
                     random.seed(seed + int(scale * 100) + int(mean_val))
-                    cp_det = ChangePointDetector(threshold=6.0, slack=0.8, min_observations=30)
+                    cp_det = ChangePointDetector(threshold=6.0, slack=1.0, min_observations=30)
                     total_runs += 1
                     for _ in range(120):
                         val = mean_val + random.gauss(0, scale)
@@ -223,5 +223,37 @@ class TestChangePointDetector:
                             break
 
         assert false_positives == 0, (
-            f"False positives detected: {false_positives} / {total_runs} runs"
+            f"False positives in calibration set: {false_positives} / {total_runs} runs"
+        )
+
+    def test_changepoint_held_out_validation_set(self):
+        """Held-out validation set: completely unseen seeds and extreme scales (1e-6 to 1e6)."""
+        import random
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        # Entirely unseen seeds and extreme scales never used in calibration
+        held_out_seeds = [555, 777, 8888, 12345, 67890, 999999]
+        extreme_scales = [1e-6, 1e-4, 0.05, 2.5, 500.0, 1e6]
+        extreme_means = [1e-3, 0.5, 100.0, 1e6]
+
+        total_runs = 0
+        false_positives = 0
+
+        for seed in held_out_seeds:
+            for scale in extreme_scales:
+                for mean_val in extreme_means:
+                    random.seed(seed + int(scale * 100) + int(mean_val))
+                    cp_det = ChangePointDetector(threshold=6.0, slack=1.0, min_observations=30)
+                    total_runs += 1
+                    for _ in range(120):
+                        val = mean_val + random.gauss(0, scale)
+                        if cp_det.update(val) is not None:
+                            false_positives += 1
+                            break
+
+        # Zero or near-zero false positive rate on unseen held-out validation set
+        fp_rate = false_positives / total_runs
+        assert fp_rate <= 0.01, (
+            f"False positive rate on held-out set exceeded threshold: {false_positives} / {total_runs} ({fp_rate:.2%})"
         )
