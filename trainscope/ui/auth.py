@@ -15,6 +15,7 @@ from typing import Callable
 from fastapi import Request
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import HTTPConnection
 
 API_KEY_HEADER = "X-API-Key"
 AUTH_BEARER_PREFIX = "Bearer "
@@ -35,14 +36,14 @@ def _get_basic_auth() -> tuple[str, str] | None:
     return user, password
 
 
-def _extract_bearer_token(request: Request) -> str | None:
+def _extract_bearer_token(request: HTTPConnection) -> str | None:
     auth = request.headers.get("Authorization", "")
     if auth.startswith(AUTH_BEARER_PREFIX):
         return auth[len(AUTH_BEARER_PREFIX) :].strip()
     return request.headers.get(API_KEY_HEADER)
 
 
-def _extract_basic_credentials(request: Request) -> tuple[str, str] | None:
+def _extract_basic_credentials(request: HTTPConnection) -> tuple[str, str] | None:
     auth = request.headers.get("Authorization", "")
     if not auth.startswith(AUTH_BASIC_PREFIX):
         return None
@@ -61,8 +62,8 @@ def auth_enabled() -> bool:
     return _get_api_key() is not None or _get_basic_auth() is not None
 
 
-def verify_request(request: Request) -> bool:
-    """Return True if the request satisfies the configured auth checks."""
+def verify_request(request: HTTPConnection) -> bool:
+    """Return True if the request or WebSocket connection satisfies the configured auth checks."""
     expected_api_key = _get_api_key()
     if expected_api_key is not None:
         provided = _extract_bearer_token(request)
