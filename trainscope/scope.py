@@ -232,14 +232,19 @@ class TrainScope:
         if not math.isfinite(loss_f):
             logger.warning("Non-finite loss recorded at step %d: %s", step_idx, loss_f)
 
+        # clip_grad_norm is deprecated (see the warning above) and TrainScope
+        # no longer clips gradients itself, so there is no separate
+        # post-clip reading to take: grad_norm_after_clip always mirrors
+        # grad_norm_before_clip. If the caller clips externally *before*
+        # calling step(), both fields report the already-clipped norm.
         grad_norm_before = self._compute_global_grad_norm()
         grad_norm_after = grad_norm_before
 
         optimizer_v_norm = self._compute_optimizer_v_norm()
         lr = self._get_lr()
 
-        if math.isnan(loss_f):
-            # Do not poison the detector's baseline with NaN.
+        if not math.isfinite(loss_f):
+            # Do not poison the detector's baseline with NaN/Inf.
             score = None
         else:
             score = self._detector.update(loss_f)
@@ -257,6 +262,7 @@ class TrainScope:
             "step_time_ms": step_time_ms,
             "batch_index": batch_index if batch_index is not None else -1,
             "is_spike": is_spike,
+            "spike_score": float(score) if score is not None else 0.0,
         }
         if self._config.track_memory:
             cpu_mb, cuda_mb = self._memory_mb()
@@ -385,7 +391,7 @@ class TrainScope:
 
             for alerter in self._alerters:
                 try:
-                    alerter.notify(spike_info)
+                    alerter.alert(spike_info, global_snap, layer_snaps)
                 except Exception:
                     logger.exception(
                         "Alerter %s failed on spike at step %d", type(alerter).__name__, step_idx

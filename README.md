@@ -81,8 +81,14 @@ trainscope ui --run ./trainscope_runs/<run-name>
 
 ### Per step (global)
 
-- Train loss, global grad norm (pre- and post-clip), learning rate
-- CUSUM change-point anomaly score ($S^+$) & Z-score
+- Train loss, global grad norm, learning rate
+  (`grad_norm_after_clip` currently mirrors `grad_norm_before_clip`: TrainScope
+  no longer clips gradients itself — clip externally with
+  `torch.nn.utils.clip_grad_norm_()` before calling `step()` — so there is no
+  separate post-clip reading to record)
+- Anomaly score (`spike_score`) from the configured detector — CUSUM
+  change-point by default, or Z-score/percentile if configured via
+  `detector=`. Only the active detector's score is recorded per step.
 - Adam second-moment (`v`) norm — stale momentum indicator
 - Step time, batch index
 - CPU/CUDA memory usage when `track_memory=True`
