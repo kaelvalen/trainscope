@@ -109,7 +109,7 @@ Four views, one command:
 | **Diff View** | KL divergence of weight distributions between any two steps |
 | **Spike Inspector** | Per-spike window: loss + grad timeline and layer breakdown |
 
-The UI works immediately after `pip install trainscope` — a built-in fallback HTML UI is served when the React build is absent. For the full React build:
+The React UI is served by default after `pip install trainscope` (pre-compiled assets included). If developing from source:
 
 ```bash
 cd frontend && npm install && npm run build
