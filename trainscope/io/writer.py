@@ -65,7 +65,7 @@ PLUGIN_METRICS_SCHEMA = pa.schema(
     ]
 )
 
-FLUSH_INTERVAL = 100
+FLUSH_INTERVAL = 5
 
 
 def _make_global_batch(rows: list[dict]) -> pa.RecordBatch:
@@ -149,10 +149,15 @@ def _make_plugin_metrics_batch(rows: list[dict]) -> pa.RecordBatch:
 class DiskWriter:
     """Persists training snapshots to Arrow, JSON, checkpoint, and RNG-state files.
 
+    Because PyArrow IPC files do not support true append and only become
+    readable once a footer is written, each flush atomically rewrites the
+    global/layer/plugin-metrics Arrow files from their full in-memory row
+    lists. This keeps files valid and readable by the UI server throughout a
+    live run, not just after close().
+
     Supports resuming an existing run: when ``config.resume`` is True and Arrow
-    files already exist, existing rows are read at initialization and merged with
-    new rows on the first flush. Because PyArrow IPC files do not support true
-    append, resuming rewrites the merged file atomically.
+    files already exist, existing rows are read at initialization and merged
+    with new rows on the first flush.
     """
 
     def __init__(
@@ -178,17 +183,19 @@ class DiskWriter:
         self._layer_buffers: dict[str, list[dict]] = {}
         self._plugin_metrics_buffer: list[dict] = []
 
-        self._global_writer: ipc.RecordBatchFileWriter | None = None
-        self._layer_writers: dict[str, ipc.RecordBatchFileWriter] = {}
-        self._plugin_metrics_writer: ipc.RecordBatchFileWriter | None = None
         self._closed = False
 
-        # Resume state. If resuming, existing rows are kept in memory and flushed
-        # together with new rows on the first flush/close.
+        # Every flush rewrites each Arrow file from this in-memory row list (see
+        # _flush_global/_flush_layer/_flush_plugin_metrics). PyArrow's IPC file
+        # format only becomes readable once a footer is written at close(), so a
+        # long-lived open writer would leave the file unreadable to the UI server
+        # for the entire duration of a live run. Rewriting atomically on every
+        # flush keeps the on-disk file always valid, at the cost of O(rows) work
+        # per flush. Also holds rows reloaded when resuming an existing run.
         self._resume = False
-        self._resume_global_rows: list[dict] = []
-        self._resume_layer_rows: dict[str, list[dict]] = {}
-        self._resume_plugin_metrics_rows: list[dict] = []
+        self._all_global_rows: list[dict] = []
+        self._all_layer_rows: dict[str, list[dict]] = {}
+        self._all_plugin_metrics_rows: list[dict] = []
         # Total number of global rows persisted (including rows loaded for resume).
         self._n_global_rows = 0
         # Highest step number seen via append_global (or loaded for resume).
@@ -238,16 +245,16 @@ class DiskWriter:
                     table = reader.read_all()
                 pydict = table.to_pydict()
                 # to_pydict returns columns; convert to row dicts.
-                self._resume_global_rows = [
+                self._all_global_rows = [
                     dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())
                 ]
-                self._n_global_rows = len(self._resume_global_rows)
-                if self._resume_global_rows:
-                    self._last_step = self._resume_global_rows[-1].get("step")
+                self._n_global_rows = len(self._all_global_rows)
+                if self._all_global_rows:
+                    self._last_step = self._all_global_rows[-1].get("step")
                 self._resume = True
             except Exception:
                 logger.exception("Failed to resume global.arrow, falling back to overwrite")
-                self._resume_global_rows = []
+                self._all_global_rows = []
 
         layers_dir = self._run_path / "layers"
         if layers_dir.is_dir():
@@ -258,7 +265,7 @@ class DiskWriter:
                     table = reader.read_all()
                     pydict = table.to_pydict()
                     rows = [dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())]
-                    self._resume_layer_rows[layer_name] = rows
+                    self._all_layer_rows[layer_name] = rows
                     self._layer_files.add(layer_name)
                     self._resume = True
                 except Exception:
@@ -270,7 +277,7 @@ class DiskWriter:
                 with ipc.open_file(str(plugin_metrics_path)) as reader:
                     table = reader.read_all()
                 pydict = table.to_pydict()
-                self._resume_plugin_metrics_rows = [
+                self._all_plugin_metrics_rows = [
                     dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())
                 ]
                 self._resume = True
@@ -302,36 +309,12 @@ class DiskWriter:
             "last_step": last_step,
             "n_global_rows": self._n_global_rows + len(self._global_buffer),
             "layer_files": layer_files,
-            "n_plugin_metric_rows": len(self._resume_plugin_metrics_rows)
+            "n_plugin_metric_rows": len(self._all_plugin_metrics_rows)
             + len(self._plugin_metrics_buffer),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         with open(self._run_path / "manifest.json", "w") as f:
             json.dump(manifest, f, indent=2)
-
-    # --------------------------------------------------------------------- #
-    # Arrow writers
-    # --------------------------------------------------------------------- #
-    def _get_global_writer(self) -> ipc.RecordBatchFileWriter:
-        if self._global_writer is None:
-            path = self._global_path()
-            sink = pa.OSFile(str(path), "wb")
-            self._global_writer = ipc.new_file(sink, GLOBAL_SCHEMA)
-        return self._global_writer
-
-    def _get_layer_writer(self, layer_name: str) -> ipc.RecordBatchFileWriter:
-        if layer_name not in self._layer_writers:
-            path = self._layer_path(layer_name)
-            sink = pa.OSFile(str(path), "wb")
-            self._layer_writers[layer_name] = ipc.new_file(sink, LAYER_SCHEMA)
-        return self._layer_writers[layer_name]
-
-    def _get_plugin_metrics_writer(self) -> ipc.RecordBatchFileWriter:
-        if self._plugin_metrics_writer is None:
-            path = self._plugin_metrics_path()
-            sink = pa.OSFile(str(path), "wb")
-            self._plugin_metrics_writer = ipc.new_file(sink, PLUGIN_METRICS_SCHEMA)
-        return self._plugin_metrics_writer
 
     # --------------------------------------------------------------------- #
     # Public append API
@@ -382,49 +365,29 @@ class DiskWriter:
         if not self._global_buffer:
             return
 
-        if self._resume:
-            rows = self._resume_global_rows + self._global_buffer
-            self._atomic_rewrite_global(rows)
-            self._resume_global_rows = rows
-            self._global_buffer = []
-            self._n_global_rows = len(rows)
-            return
-
-        n = len(self._global_buffer)
-        self._get_global_writer().write_batch(_make_global_batch(self._global_buffer))
+        rows = self._all_global_rows + self._global_buffer
+        self._atomic_rewrite_global(rows)
+        self._all_global_rows = rows
         self._global_buffer = []
-        self._n_global_rows += n
+        self._n_global_rows = len(rows)
 
     def _flush_layer(self, layer_name: str):
         rows = self._layer_buffers.get(layer_name, [])
         if not rows:
             return
 
-        if layer_name in self._resume_layer_rows:
-            combined = self._resume_layer_rows[layer_name] + rows
-            self._atomic_rewrite_layer(layer_name, combined)
-            self._resume_layer_rows[layer_name] = combined
-            del self._layer_buffers[layer_name]
-            return
-
-        self._get_layer_writer(layer_name).write_batch(_make_layer_batch(rows))
-        self._layer_files.add(layer_name)
-        self._layer_buffers[layer_name] = []
+        combined = self._all_layer_rows.get(layer_name, []) + rows
+        self._atomic_rewrite_layer(layer_name, combined)
+        self._all_layer_rows[layer_name] = combined
+        del self._layer_buffers[layer_name]
 
     def _flush_plugin_metrics(self):
         if not self._plugin_metrics_buffer:
             return
 
-        if self._resume:
-            rows = self._resume_plugin_metrics_rows + self._plugin_metrics_buffer
-            self._atomic_rewrite_plugin_metrics(rows)
-            self._resume_plugin_metrics_rows = rows
-            self._plugin_metrics_buffer = []
-            return
-
-        self._get_plugin_metrics_writer().write_batch(
-            _make_plugin_metrics_batch(self._plugin_metrics_buffer)
-        )
+        rows = self._all_plugin_metrics_rows + self._plugin_metrics_buffer
+        self._atomic_rewrite_plugin_metrics(rows)
+        self._all_plugin_metrics_rows = rows
         self._plugin_metrics_buffer = []
 
     def _atomic_rewrite_global(self, rows: list[dict]):
@@ -539,31 +502,10 @@ class DiskWriter:
         if self._closed:
             return
 
-        if self._resume:
-            # Resume mode: merge any existing rows with buffered rows and rewrite
-            # the files atomically. Once a run has resumed, keep rewriting to
-            # avoid losing previously merged rows (PyArrow IPC does not append).
-            if self._global_buffer:
-                rows = self._resume_global_rows + self._global_buffer
-                self._atomic_rewrite_global(rows)
-                self._resume_global_rows = rows
-                self._global_buffer = []
-                self._n_global_rows = len(rows)
-            for layer_name, rows in list(self._layer_buffers.items()):
-                combined = self._resume_layer_rows.get(layer_name, []) + rows
-                self._atomic_rewrite_layer(layer_name, combined)
-                self._resume_layer_rows[layer_name] = combined
-                del self._layer_buffers[layer_name]
-            if self._plugin_metrics_buffer:
-                rows = self._resume_plugin_metrics_rows + self._plugin_metrics_buffer
-                self._atomic_rewrite_plugin_metrics(rows)
-                self._resume_plugin_metrics_rows = rows
-                self._plugin_metrics_buffer = []
-        else:
-            self._flush_global()
-            for layer_name in list(self._layer_buffers.keys()):
-                self._flush_layer(layer_name)
-            self._flush_plugin_metrics()
+        self._flush_global()
+        for layer_name in list(self._layer_buffers.keys()):
+            self._flush_layer(layer_name)
+        self._flush_plugin_metrics()
 
         self._write_manifest()
         logger.debug("Flushed writer for run %s", self._run_path.name)
@@ -574,22 +516,4 @@ class DiskWriter:
         try:
             self.flush()
         finally:
-            if self._global_writer is not None:
-                try:
-                    self._global_writer.close()
-                except Exception:
-                    pass
-                self._global_writer = None
-            for writer in self._layer_writers.values():
-                try:
-                    writer.close()
-                except Exception:
-                    pass
-            self._layer_writers = {}
-            if self._plugin_metrics_writer is not None:
-                try:
-                    self._plugin_metrics_writer.close()
-                except Exception:
-                    pass
-                self._plugin_metrics_writer = None
             self._closed = True

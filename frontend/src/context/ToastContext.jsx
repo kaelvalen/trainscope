@@ -41,7 +41,7 @@ export function useToast() {
 function ToastContainer({ toasts, onDismiss }) {
   return (
     <div
-      className="pointer-events-none fixed right-4 top-4 z-[100] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
+      className="pointer-events-none fixed right-4 top-20 z-[100] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2"
       aria-live="polite"
       aria-atomic="true"
     >
@@ -61,7 +61,7 @@ function ToastItem({ toast, onDismiss }) {
   return (
     <div
       className={cn(
-        'pointer-events-auto flex flex-col gap-1 rounded-lg border p-3 shadow-lg',
+        'pointer-events-auto flex flex-col gap-1 rounded-xl border p-3 shadow-lg backdrop-blur',
         'transition-all duration-300 ease-out',
         variantStyles[toast.variant || 'info']
       )}

@@ -1,30 +1,17 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useRun } from '../RunContext.jsx'
 import { fetchLayersRanked, fetchLayer } from '../api.js'
-import { spikeShape, scrubLineShape, truncateLayerName, CHART_COLORS } from '../theme.js'
+import { scrubLineShape, truncateLayerName, CHART_COLORS } from '../theme.js'
+import { buildSpikeClusterShapes, buildSpikeClusterAnnotations } from '../utils/spikeCluster.js'
 import Chart from '../components/Chart.jsx'
 import StepScrubber from '../components/StepScrubber.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { Skeleton } from '../components/ui/Skeleton.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
+import { ChartCard } from '../components/ui/ChartCard.jsx'
 import { Card, CardContent } from '../components/ui/Card.jsx'
-import { Activity, TrendingDown, Activity as Pulse, Zap } from 'lucide-react'
-
-function buildSpikeAnnotations(rows) {
-  return rows
-    .filter((r) => r.is_spike)
-    .map((r) => ({
-      x: r.step,
-      y: 1,
-      xref: 'x',
-      yref: 'paper',
-      text: 'spike',
-      showarrow: false,
-      font: { color: CHART_COLORS.spike, size: 10 },
-      yanchor: 'top',
-    }))
-}
+import { Activity, BarChart3, TrendingDown, Activity as Pulse, Zap } from 'lucide-react'
 
 function buildZoomLayout(extra = {}) {
   return {
@@ -35,7 +22,7 @@ function buildZoomLayout(extra = {}) {
 }
 
 export default function Timeline() {
-  const { globalData, layerNames } = useRun()
+  const { globalData, layerNames, spikeEvents } = useRun()
   const [layerGradNorms, setLayerGradNorms] = useState({})
   const [scrubStep, setScrubStep] = useState(0)
   const [layerLoading, setLayerLoading] = useState(true)
@@ -85,18 +72,41 @@ export default function Timeline() {
   const steps = useMemo(() => globalData.map((r) => r.step), [globalData])
   const losses = useMemo(() => globalData.map((r) => r.loss), [globalData])
   const gradNorms = useMemo(() => globalData.map((r) => r.grad_norm_before_clip), [globalData])
-  const spikeShapes = useMemo(() => {
-    const shapes = globalData.filter((r) => r.is_spike).map((r) => spikeShape(r.step))
-    return shapes
-  }, [globalData])
-  const spikeAnnotations = useMemo(() => buildSpikeAnnotations(globalData), [globalData])
+
+  const spikeShapes = useMemo(() => buildSpikeClusterShapes(spikeEvents), [spikeEvents])
+  const spikeAnnotations = useMemo(() => buildSpikeClusterAnnotations(spikeEvents), [spikeEvents])
+
   const scrubShapes = useMemo(
     () => (scrubStep != null ? [scrubLineShape(scrubStep)] : []),
     [scrubStep]
   )
 
   const latestRow = globalData[globalData.length - 1] || null
-  const spikeCount = useMemo(() => globalData.filter((r) => r.is_spike).length, [globalData])
+  const rawSpikeCount = useMemo(() => globalData.filter((r) => r.is_spike).length, [globalData])
+
+  const spikeStatCardProps = useMemo(() => {
+    const count = spikeEvents.length
+    if (count === 0) {
+      return { value: '0', subtitle: 'No anomalies' }
+    }
+    if (count === 1) {
+      const ev = spikeEvents[0]
+      if (ev.earlyWarningWindow > 0) {
+        return {
+          value: '1 event',
+          subtitle: `${ev.earlyWarningWindow}-step early warning (Step ${ev.startStep} → ${ev.endStep})`,
+        }
+      }
+      return {
+        value: '1 event',
+        subtitle: `Step ${ev.startStep}`,
+      }
+    }
+    return {
+      value: `${count} events`,
+      subtitle: `${rawSpikeCount} raw detections grouped`,
+    }
+  }, [spikeEvents, rawSpikeCount])
 
   const scrubRow = useMemo(() => {
     if (!globalData.length) return null
@@ -117,11 +127,23 @@ export default function Timeline() {
   )
 
   if (globalData.length === 0) {
-    return <EmptyState icon="📉">No global data found. Has a training run completed?</EmptyState>
+    return (
+      <EmptyState icon={<BarChart3 className="h-5 w-5" />}>
+        No global data found. Has a training run completed?
+      </EmptyState>
+    )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      <div className="section-row">
+        <div>
+          <p className="section-label">Run snapshot</p>
+          <p className="section-note">Latest recorded signals across the training window</p>
+        </div>
+        <span className="section-note">{globalData.length.toLocaleString()} steps recorded</span>
+      </div>
+
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           label="Steps"
@@ -139,63 +161,85 @@ export default function Timeline() {
           value={latestRow?.grad_norm_before_clip?.toFixed(4) ?? '—'}
           icon={Pulse}
         />
-        <StatCard label="Spikes" value={spikeCount} icon={Zap} />
+        <StatCard
+          label="Spikes"
+          value={spikeStatCardProps.value}
+          subtitle={spikeStatCardProps.subtitle}
+          icon={Zap}
+        />
       </div>
 
       <ErrorMessage message={error} />
 
-      <Chart
-        data={[
-          {
-            x: steps,
-            y: losses,
-            type: 'scatter',
-            mode: 'lines',
-            name: 'Loss',
-            line: { color: CHART_COLORS.loss, width: 1.5 },
-          },
-        ]}
-        layout={buildZoomLayout({
-          title: { text: 'Training Loss', font: { size: 14 } },
-          height: 320,
-          shapes: [...spikeShapes, ...scrubShapes],
-          annotations: spikeAnnotations,
-          uirevision: 'timeline-loss',
-        })}
-        config={{ scrollZoom: true }}
-      />
+      <ChartCard
+        title="Training loss"
+        description="Loss trajectory with grouped anomaly windows and the current scrub position."
+      >
+        <Chart
+          data={[
+            {
+              x: steps,
+              y: losses,
+              type: 'scatter',
+              mode: 'lines',
+              name: 'Loss',
+              line: { color: CHART_COLORS.loss, width: 1.5 },
+            },
+          ]}
+          layout={buildZoomLayout({
+            height: 320,
+            shapes: [...spikeShapes, ...scrubShapes],
+            annotations: spikeAnnotations,
+            uirevision: 'timeline-loss',
+          })}
+          config={{ scrollZoom: true }}
+        />
+      </ChartCard>
 
-      <Chart
-        data={[
-          {
-            x: steps,
-            y: gradNorms,
-            type: 'scatter',
-            mode: 'lines',
-            name: 'Grad Norm',
-            line: { color: CHART_COLORS.gradNorm, width: 1.5 },
-          },
-        ]}
-        layout={buildZoomLayout({
-          title: { text: 'Global Gradient Norm (before clip)', font: { size: 14 } },
-          height: 280,
-          shapes: [...spikeShapes, ...scrubShapes],
-          uirevision: 'timeline-grad',
-        })}
-        config={{ scrollZoom: true }}
-      />
+      <ChartCard
+        title="Global gradient norm"
+        description="Pre-clip gradient magnitude makes sudden update instability easier to isolate."
+      >
+        <Chart
+          data={[
+            {
+              x: steps,
+              y: gradNorms,
+              type: 'scatter',
+              mode: 'lines',
+              name: 'Grad Norm',
+              line: { color: CHART_COLORS.gradNorm, width: 1.5 },
+            },
+          ]}
+          layout={buildZoomLayout({
+            height: 280,
+            shapes: [...spikeShapes, ...scrubShapes],
+            uirevision: 'timeline-grad',
+          })}
+          config={{ scrollZoom: true }}
+        />
+      </ChartCard>
 
       <StepScrubber steps={steps} value={scrubStep} onChange={setScrubStep} />
 
       {scrubRow && (
-        <Card>
+        <Card className="scrub-readout">
           <CardContent className="text-sm">
-            <strong className="text-foreground">Step {scrubRow.step}</strong>
-            {' — '}
-            Loss: <span className="text-accent">{scrubRow.loss?.toFixed(4)}</span>
-            {' | '}
-            Grad: <span className="text-success">{scrubRow.grad_norm_before_clip?.toFixed(4)}</span>
-            {scrubRow.is_spike && <span className="ml-2 font-semibold text-danger">SPIKE</span>}
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+              <strong className="text-foreground">Step {scrubRow.step}</strong>
+              <span>
+                Loss <span className="font-semibold text-accent">{scrubRow.loss?.toFixed(4)}</span>
+              </span>
+              <span>
+                Grad{' '}
+                <span className="font-semibold text-success">
+                  {scrubRow.grad_norm_before_clip?.toFixed(4)}
+                </span>
+              </span>
+              {scrubRow.is_spike && (
+                <span className="font-semibold text-danger">SPIKE DETECTED</span>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -203,21 +247,22 @@ export default function Timeline() {
       {layerLoading ? (
         <Skeleton className="h-72" />
       ) : layerGradTraces.length > 0 ? (
-        <Chart
-          data={layerGradTraces}
-          layout={buildZoomLayout({
-            title: {
-              text: 'Per-Layer Gradient Norms (top 8 by grad variance)',
-              font: { size: 14 },
-            },
-            height: 340,
-            showlegend: true,
-            legend: { font: { size: 10 } },
-            shapes: scrubShapes,
-            uirevision: 'timeline-layers',
-          })}
-          config={{ scrollZoom: true }}
-        />
+        <ChartCard
+          title="Per-layer gradient norms"
+          description="Top eight layers ranked by gradient variance."
+        >
+          <Chart
+            data={layerGradTraces}
+            layout={buildZoomLayout({
+              height: 340,
+              showlegend: true,
+              legend: { font: { size: 10 } },
+              shapes: scrubShapes,
+              uirevision: 'timeline-layers',
+            })}
+            config={{ scrollZoom: true }}
+          />
+        </ChartCard>
       ) : null}
     </div>
   )

@@ -8,7 +8,7 @@ export default function StepScrubber({
   showValue = true,
   id = 'step-scrubber',
 }) {
-  const stepSet = useMemo(() => new Set(steps), [steps])
+  const stepSet = useMemo(() => new Set(steps || []), [steps])
 
   if (!steps || steps.length === 0) return null
 
@@ -28,29 +28,36 @@ export default function StepScrubber({
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <label htmlFor={id} className="text-xs font-medium text-muted">
-        {label}
-      </label>
-      <input
-        id={id}
-        type="range"
-        min={min}
-        max={max}
-        step={steps.length > 1 ? steps[1] - steps[0] : 1}
-        value={value ?? min}
-        onChange={handleChange}
-        className="h-1 flex-1 cursor-pointer appearance-none rounded bg-border accent-accent"
-        list={`${id}-ticks`}
-      />
-      <datalist id={`${id}-ticks`}>
-        {steps.map((s) => (
-          <option key={s} value={s} />
-        ))}
-      </datalist>
-      {showValue && (
-        <span className="min-w-[4rem] text-right text-xs text-muted">Step {value ?? min}</span>
-      )}
+    <div className="scrubber">
+      <div className="scrubber__meta">
+        <label htmlFor={id} className="scrubber__label">
+          {label}
+        </label>
+        <div className="flex items-center gap-3">
+          <span className="scrubber__range">
+            {min} → {max}
+          </span>
+          {showValue && <span className="scrubber__value">Step {value ?? min}</span>}
+        </div>
+      </div>
+      <div className="scrubber__track">
+        <input
+          id={id}
+          type="range"
+          min={min}
+          max={max}
+          step="1"
+          value={value ?? min}
+          onChange={handleChange}
+          list={`${id}-ticks`}
+          aria-label={label}
+        />
+        <datalist id={`${id}-ticks`}>
+          {steps.map((s) => (
+            <option key={s} value={s} />
+          ))}
+        </datalist>
+      </div>
     </div>
   )
 }

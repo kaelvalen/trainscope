@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Keyboard, X } from 'lucide-react'
 import { Button } from './ui/Button.jsx'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card.jsx'
 import useKeyboardShortcuts from '../hooks/useKeyboardShortcuts.js'
@@ -24,7 +25,8 @@ export default function KeyboardShortcutsHelp() {
         title="Keyboard shortcuts (?)"
         aria-label="Keyboard shortcuts"
       >
-        ?
+        <Keyboard className="h-3.5 w-3.5" />
+        <span className="hidden sm:inline">Shortcuts</span>
       </Button>
 
       {open && (
@@ -38,6 +40,14 @@ export default function KeyboardShortcutsHelp() {
           <Card className="w-full max-w-sm" onClick={(e) => e.stopPropagation()}>
             <CardHeader>
               <CardTitle id="keyboard-help-title">Keyboard shortcuts</CardTitle>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setOpen(false)}
+                aria-label="Close keyboard shortcuts"
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </CardHeader>
             <CardContent>
               <ul className="divide-y divide-border">

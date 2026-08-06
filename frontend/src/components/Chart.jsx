@@ -12,6 +12,7 @@ export default function Chart({ data, layout = {}, config = {}, className, ...re
   const mergedLayout = {
     ...DARK_LAYOUT,
     ...layout,
+    autosize: true,
     font: { ...DARK_LAYOUT.font, ...layout.font },
     margin: { ...DARK_LAYOUT.margin, ...layout.margin },
     xaxis: { ...DARK_LAYOUT.xaxis, ...layout.xaxis },
@@ -21,7 +22,7 @@ export default function Chart({ data, layout = {}, config = {}, className, ...re
   const mergedConfig = { ...PLOT_CONFIG, ...config }
 
   return (
-    <div className={cn('w-full', className)}>
+    <div className={cn('chart-frame w-full', className)}>
       <Plot
         data={data}
         layout={mergedLayout}

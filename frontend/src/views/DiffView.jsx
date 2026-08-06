@@ -8,6 +8,7 @@ import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { Button } from '../components/ui/Button.jsx'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.jsx'
+import { ChartCard } from '../components/ui/ChartCard.jsx'
 import { Badge } from '../components/ui/Badge.jsx'
 import { StatCard } from '../components/ui/StatCard.jsx'
 
@@ -53,17 +54,24 @@ export default function DiffView() {
 
   return (
     <div className="space-y-5">
-      <Card>
+      <Card className="control-card">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <GitCompare className="h-4 w-4" />
-            Compare two steps
-          </CardTitle>
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <span className="metric-card__icon" aria-hidden="true">
+                <GitCompare className="h-3.5 w-3.5" />
+              </span>
+              Compare two steps
+            </CardTitle>
+            <p className="chart-card__description">
+              Find the layers whose weight distributions changed most between checkpoints.
+            </p>
+          </div>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="diff-step-a" className="text-xs font-medium text-muted">
+          <div className="flex flex-wrap items-end gap-3 sm:gap-4">
+            <div className="flex min-w-[9rem] flex-1 flex-col gap-2 sm:max-w-[12rem]">
+              <label htmlFor="diff-step-a" className="control-label">
                 Step A
               </label>
               <input
@@ -73,12 +81,12 @@ export default function DiffView() {
                 onChange={(e) => setStepA(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="e.g. 4400"
-                className="w-32 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-accent"
+                className="control-input w-full"
               />
             </div>
 
-            <div className="flex flex-col gap-1">
-              <label htmlFor="diff-step-b" className="text-xs font-medium text-muted">
+            <div className="flex min-w-[9rem] flex-1 flex-col gap-2 sm:max-w-[12rem]">
+              <label htmlFor="diff-step-b" className="control-label">
                 Step B
               </label>
               <input
@@ -88,11 +96,11 @@ export default function DiffView() {
                 onChange={(e) => setStepB(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="e.g. 4450"
-                className="w-32 rounded-md border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:border-accent"
+                className="control-input w-full"
               />
             </div>
 
-            <Button onClick={handleCompare} disabled={loading}>
+            <Button onClick={handleCompare} disabled={loading} className="min-w-[7.5rem]">
               {loading ? 'Comparing…' : 'Compare'}
             </Button>
           </div>
@@ -103,7 +111,9 @@ export default function DiffView() {
       <ErrorMessage message={error} onRetry={handleCompare} />
 
       {!loading && diffData.length === 0 && compared && !error && (
-        <EmptyState icon="🌗">No layer data available for the selected steps.</EmptyState>
+        <EmptyState icon={<GitCompare className="h-5 w-5" />}>
+          No layer data available for the selected steps.
+        </EmptyState>
       )}
 
       {!loading && diffData.length > 0 && compared && (
@@ -139,7 +149,11 @@ export default function DiffView() {
               </CardContent>
             </Card>
 
-            <Card className="lg:col-span-2">
+            <ChartCard
+              className="lg:col-span-2"
+              title={`Distribution divergence: ${compared.a} vs ${compared.b}`}
+              description="Red marks the three layers with the largest KL divergence."
+            >
               <Chart
                 data={[
                   {
@@ -152,32 +166,16 @@ export default function DiffView() {
                   },
                 ]}
                 layout={{
-                  title: {
-                    text: `Weight Distribution KL Divergence: Step ${compared.a} vs Step ${compared.b}`,
-                    font: { size: 14 },
-                  },
                   height: Math.max(400, 30 * layers.length + 120),
-                  margin: { l: 240, r: 20, t: 60, b: 40 },
+                  margin: { l: 180, r: 20, t: 24, b: 40 },
                   yaxis: {
                     automargin: true,
                     categoryorder: 'array',
                     categoryarray: [...layers].reverse(),
                   },
-                  annotations: [
-                    {
-                      text: 'Red = top 3 diverged layers',
-                      xref: 'paper',
-                      yref: 'paper',
-                      x: 1,
-                      y: 1.05,
-                      showarrow: false,
-                      font: { size: 11, color: CHART_COLORS.muted },
-                      xanchor: 'right',
-                    },
-                  ],
                 }}
               />
-            </Card>
+            </ChartCard>
           </div>
         </>
       )}

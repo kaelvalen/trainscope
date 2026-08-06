@@ -5,7 +5,7 @@ export default function ErrorMessage({ message, onRetry }) {
 
   return (
     <div
-      className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger-bg/20 p-4 text-sm text-danger"
+      className="error-message mb-5 flex flex-wrap items-center justify-between gap-3 p-4 text-sm"
       role="alert"
     >
       <span>{message}</span>

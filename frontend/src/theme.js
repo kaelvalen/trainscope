@@ -6,18 +6,18 @@
  */
 
 export const COLORS = {
-  bg: '#0f1117',
-  panel: '#1a1f2e',
-  border: '#2d3748',
-  text: '#e2e8f0',
-  muted: '#718096',
-  accent: '#63b3ed',
-  success: '#68d391',
-  warning: '#f6ad55',
-  danger: '#fc8181',
-  dangerBg: '#742a2a',
-  purple: '#b794f4',
-  button: '#2b6cb0',
+  bg: '#0d111a',
+  panel: '#131a26',
+  border: '#293241',
+  text: '#e8edf5',
+  muted: '#8290a5',
+  accent: '#56d5e8',
+  success: '#63d8a2',
+  warning: '#f6bb67',
+  danger: '#fb7d87',
+  dangerBg: '#4a232b',
+  purple: '#b99af7',
+  button: '#0f7180',
 }
 
 /**
@@ -46,15 +46,18 @@ export const SPACING = {
 export const DARK_LAYOUT = {
   paper_bgcolor: COLORS.panel,
   plot_bgcolor: COLORS.bg,
-  font: { color: COLORS.text, size: 12 },
-  margin: { l: 60, r: 20, t: 40, b: 40 },
+  font: { color: COLORS.text, size: 11, family: 'system-ui, sans-serif' },
+  margin: { l: 58, r: 24, t: 24, b: 42 },
+  colorway: [COLORS.accent, COLORS.success, COLORS.purple, COLORS.warning, COLORS.danger],
   xaxis: { gridcolor: COLORS.border, zerolinecolor: COLORS.border },
   yaxis: { gridcolor: COLORS.border, zerolinecolor: COLORS.border },
-  hovermode: 'closest',
+  hovermode: 'x unified',
+  hoverlabel: { bgcolor: COLORS.panel, bordercolor: COLORS.border, font: { color: COLORS.text } },
 }
 
 export const PLOT_CONFIG = {
   displayModeBar: false,
+  displaylogo: false,
   responsive: true,
 }
 
@@ -67,7 +70,7 @@ export const STYLES = {
   panel: {
     background: COLORS.panel,
     border: `1px solid ${COLORS.border}`,
-    borderRadius: '6px',
+    borderRadius: '12px',
     padding: SPACING.md,
   },
   input: {
@@ -75,7 +78,7 @@ export const STYLES = {
     border: `1px solid ${COLORS.border}`,
     color: COLORS.text,
     padding: '6px 12px',
-    borderRadius: '6px',
+    borderRadius: '8px',
     fontSize: '13px',
   },
   select: {
@@ -83,14 +86,14 @@ export const STYLES = {
     border: `1px solid ${COLORS.border}`,
     color: COLORS.text,
     padding: '6px 12px',
-    borderRadius: '6px',
+    borderRadius: '8px',
     fontSize: '13px',
   },
   button: {
     background: COLORS.button,
     color: '#fff',
     border: 'none',
-    borderRadius: '6px',
+    borderRadius: '8px',
     padding: '7px 18px',
     fontSize: '13px',
     fontWeight: 600,
