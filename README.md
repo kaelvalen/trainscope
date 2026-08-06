@@ -31,12 +31,15 @@ pip install trainscope
 
 Loss spikes in large language model training are expensive. Existing tools log aggregates; trainscope logs the *mechanism*:
 
-- **Activation kurtosis** often rises 1–5 steps before loss explodes.
-- **Gradient L2 norms** per layer show exactly where the update became unstable.
-- **Weight histograms + KL divergence** let you compare distributions before and after the spike.
-- **RNG state + optional checkpoint** at the spike step enable exact replay.
+- **CUSUM Change-Point Detection**: Catches subtle, persistent loss drifts ($0.10\sigma - 0.25\sigma$) 5–10 steps before loss explodes.
+- **Activation kurtosis**: Rises 1–5 steps before catastrophic loss explosion.
+- **Chronological Spike Story Cascade**: Traces failure cascades chronologically (`Loss Shift` → `Gradient Explosion` → `NaN Collapse`) to isolate root causes instead of terminal symptoms.
+- **Gradient L2 norms**: Per-layer breakdowns show exactly which transformer block initiated the update instability.
+- **WandB Zero-Config Integration**: Auto-detects active `wandb.run` sessions for passive logging, with opt-in alerting (`integrations={"wandb": {"alerts": True}}`).
+- **Weight histograms + KL divergence**: Compare parameter distributions before and after the spike.
+- **RNG state + optional checkpoint**: At the spike step for exact replay.
 
-All data is written to local Arrow files; the UI is a standalone FastAPI server that can be started on the training node or your laptop.
+All data is written to local Arrow files; the UI is a lightweight standalone FastAPI server with Plotly code-splitting (<150KB initial JS load) and incremental WebSocket live streaming.
 
 ## Quick start
 
@@ -67,7 +70,7 @@ Open the run in the browser UI:
 trainscope ui --run ./trainscope_runs/<run-name>
 ```
 
-For a self-contained example with an injected spike:
+For a self-contained example with an injected drift and spike:
 
 ```bash
 python examples/gpt2_spike_demo.py
@@ -79,6 +82,7 @@ trainscope ui --run ./trainscope_runs/<run-name>
 ### Per step (global)
 
 - Train loss, global grad norm (pre- and post-clip), learning rate
+- CUSUM change-point anomaly score ($S^+$) & Z-score
 - Adam second-moment (`v`) norm — stale momentum indicator
 - Step time, batch index
 - CPU/CUDA memory usage when `track_memory=True`
@@ -95,6 +99,7 @@ trainscope ui --run ./trainscope_runs/<run-name>
 
 - Full snapshot of the surrounding window (`spike_window_before` + `spike_window_after`)
 - Per-layer data for the same window
+- Chronological Failure Cascade diagnosis (`Loss Shift` → `Grad Explosion` → `NaN`)
 - RNG state at the spike step for exact replay
 - Optional model checkpoint when `checkpoint_on_spike` is enabled
 
@@ -104,10 +109,10 @@ Four views, one command:
 
 | View | What it shows |
 |------|---------------|
-| **Timeline** | Loss + grad norm, top-8 layers by gradient variance |
+| **Timeline** | Loss + grad norm, top-8 layers by gradient variance, live WebSocket streaming |
 | **Layer Drill-down** | Kurtosis / grad norm / weight norm per layer with histogram scrubber |
 | **Diff View** | KL divergence of weight distributions between any two steps |
-| **Spike Inspector** | Per-spike window: loss + grad timeline and layer breakdown |
+| **Spike Inspector** | **Spike Story Flow**: Chronological root cause cascade diagnosis & layer breakdown |
 
 The React UI is served by default after `pip install trainscope` (pre-compiled assets included). If developing from source:
 

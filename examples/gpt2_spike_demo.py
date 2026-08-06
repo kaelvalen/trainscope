@@ -133,6 +133,10 @@ def main():
         logits = model(x)
         loss = F.cross_entropy(logits.view(-1, VOCAB), targets.view(-1))
 
+        if 45 <= step < SPIKE_STEP:
+            loss = loss * (1.0 + 0.3 * (step - 44))
+            print(f"  [drift]  step={step}  loss={loss.item():.4f}  (gradual loss creep)")
+
         if step == SPIKE_STEP:
             loss = loss * SPIKE_MULTIPLIER
             print(f"  [inject] step={step}  loss={loss.item():.4f}  (×{SPIKE_MULTIPLIER})")
