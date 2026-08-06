@@ -64,13 +64,13 @@ class TrainScope:
 
         if self._config.storage_uri:
             suffix = f"_rank{self._config.rank}" if self._config.rank is not None else ""
-            run_path = f"{self._config.storage_uri.rstrip('/')}/{run_name}{suffix}"
-            self._writer: DiskWriter | RemoteWriter = RemoteWriter(run_path, self._config)
+            remote_path = f"{self._config.storage_uri.rstrip('/')}/{run_name}{suffix}"
+            self._writer: DiskWriter | RemoteWriter = RemoteWriter(remote_path, self._config)
         else:
-            run_path = Path(self._config.run_dir) / run_name
+            disk_path = Path(self._config.run_dir) / run_name
             if self._config.rank is not None:
-                run_path = run_path.parent / f"{run_path.name}_rank{self._config.rank}"
-            self._writer = DiskWriter(run_path, self._config)
+                disk_path = disk_path.parent / f"{disk_path.name}_rank{self._config.rank}"
+            self._writer = DiskWriter(disk_path, self._config)
 
         self._buffer = RollingBuffer(
             full_resolution_window=self._config.full_resolution_window,
@@ -193,9 +193,7 @@ class TrainScope:
                 if metrics:
                     self._writer.append_plugin_metrics(step, plugin.name, metrics)
             except Exception:
-                logger.exception(
-                    "Metric plugin %s failed at step %d", plugin.name, step
-                )
+                logger.exception("Metric plugin %s failed at step %d", plugin.name, step)
 
     def step(
         self,

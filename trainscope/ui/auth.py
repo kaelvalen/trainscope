@@ -71,13 +71,13 @@ def verify_request(request: Request) -> bool:
 
     basic_auth = _get_basic_auth()
     if basic_auth is not None:
-        provided = _extract_basic_credentials(request)
-        if provided is None:
+        provided_basic = _extract_basic_credentials(request)
+        if provided_basic is None:
             return False
         user, password = basic_auth
-        if not secrets.compare_digest(user, provided[0]):
+        if not secrets.compare_digest(user, provided_basic[0]):
             return False
-        if not secrets.compare_digest(password, provided[1]):
+        if not secrets.compare_digest(password, provided_basic[1]):
             return False
 
     return True

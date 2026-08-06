@@ -6,7 +6,7 @@ import sys
 try:
     import structlog
 except Exception:  # pragma: no cover
-    structlog = None  # type: ignore[assignment]
+    structlog = None
 
 
 def configure_logging(level: str | int = "INFO", json_format: bool = False) -> None:

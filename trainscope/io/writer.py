@@ -83,9 +83,7 @@ def _make_global_batch(rows: list[dict]) -> pa.RecordBatch:
             "optimizer_v_norm": pa.array(
                 [r.get("optimizer_v_norm", 0.0) for r in rows], type=pa.float64()
             ),
-            "step_time_ms": pa.array(
-                [r.get("step_time_ms", 0.0) for r in rows], type=pa.float64()
-            ),
+            "step_time_ms": pa.array([r.get("step_time_ms", 0.0) for r in rows], type=pa.float64()),
             "batch_index": pa.array([r.get("batch_index", -1) for r in rows], type=pa.int64()),
             "is_spike": pa.array([r.get("is_spike", False) for r in rows], type=pa.bool_()),
             "cpu_memory_mb": pa.array(
@@ -103,20 +101,14 @@ def _make_layer_batch(rows: list[dict]) -> pa.RecordBatch:
     return pa.record_batch(
         {
             "step": pa.array([r.get("step", 0) for r in rows], type=pa.int64()),
-            "grad_l2_norm": pa.array(
-                [r.get("grad_l2_norm", 0.0) for r in rows], type=pa.float64()
-            ),
+            "grad_l2_norm": pa.array([r.get("grad_l2_norm", 0.0) for r in rows], type=pa.float64()),
             "weight_l2_norm": pa.array(
                 [r.get("weight_l2_norm", 0.0) for r in rows], type=pa.float64()
             ),
             "act_mean": pa.array([r.get("act_mean", 0.0) for r in rows], type=pa.float64()),
             "act_std": pa.array([r.get("act_std", 0.0) for r in rows], type=pa.float64()),
-            "act_max_abs": pa.array(
-                [r.get("act_max_abs", 0.0) for r in rows], type=pa.float64()
-            ),
-            "act_kurtosis": pa.array(
-                [r.get("act_kurtosis", 0.0) for r in rows], type=pa.float64()
-            ),
+            "act_max_abs": pa.array([r.get("act_max_abs", 0.0) for r in rows], type=pa.float64()),
+            "act_kurtosis": pa.array([r.get("act_kurtosis", 0.0) for r in rows], type=pa.float64()),
             "grad_nan_inf_ratio": pa.array(
                 [r.get("grad_nan_inf_ratio", 0.0) for r in rows], type=pa.float64()
             ),
@@ -126,13 +118,9 @@ def _make_layer_batch(rows: list[dict]) -> pa.RecordBatch:
             "hist_edges": pa.array(
                 [r.get("hist_edges", []) for r in rows], type=pa.list_(pa.float64())
             ),
-            "grad_max_abs": pa.array(
-                [r.get("grad_max_abs", 0.0) for r in rows], type=pa.float64()
-            ),
+            "grad_max_abs": pa.array([r.get("grad_max_abs", 0.0) for r in rows], type=pa.float64()),
             "grad_mean": pa.array([r.get("grad_mean", 0.0) for r in rows], type=pa.float64()),
-            "weight_mean": pa.array(
-                [r.get("weight_mean", 0.0) for r in rows], type=pa.float64()
-            ),
+            "weight_mean": pa.array([r.get("weight_mean", 0.0) for r in rows], type=pa.float64()),
             "weight_std": pa.array([r.get("weight_std", 0.0) for r in rows], type=pa.float64()),
             "weight_max_abs": pa.array(
                 [r.get("weight_max_abs", 0.0) for r in rows], type=pa.float64()

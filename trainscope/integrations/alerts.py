@@ -135,14 +135,13 @@ class EmailAlerter:
     ) -> None:
         message = self._build_message(spike_info, global_snap, layer_snaps)
         try:
-            with smtplib.SMTP(
-                self._smtp_host, self._smtp_port, timeout=self._timeout
-            ) as server:
+            with smtplib.SMTP(self._smtp_host, self._smtp_port, timeout=self._timeout) as server:
                 if self._use_tls:
                     server.starttls()
                 if self._username is not None and self._password is not None:
                     server.login(self._username, self._password)
                 server.send_message(message)
         except Exception:
-            logger.exception("Failed to send email alert for spike at step %s", spike_info.get("step"))
-
+            logger.exception(
+                "Failed to send email alert for spike at step %s", spike_info.get("step")
+            )
