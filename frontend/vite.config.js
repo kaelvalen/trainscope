@@ -20,6 +20,14 @@ export default defineConfig({
     outDir: '../trainscope/ui/static',
     emptyOutDir: true,
     chunkSizeWarningLimit: 2000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          plotly: ['plotly.js-dist-min', 'react-plotly.js'],
+          vendor: ['react', 'react-dom', 'lucide-react'],
+        },
+      },
+    },
   },
   test: {
     globals: true,
