@@ -90,27 +90,66 @@ export default function SpikeInspector() {
   }, [globalWindow, selectedSpike])
 
   const diagnosis = useMemo(() => {
-    if (!centerRow) return null
-    if (centerRow.grad_nan_inf_ratio > 0) {
-      return {
-        type: 'NaN / Inf Gradient',
-        badgeClass: 'bg-red-500/20 text-red-400 border-red-500/30',
-        desc: 'Numerical instability detected: NaN/Inf gradient values present in parameters.',
+    if (!globalWindow || globalWindow.length === 0) return null
+
+    // Chronological scan of pre-spike window up to spike step
+    let firstDriftStep = null
+    let firstGradExplosionStep = null
+    let firstNanStep = null
+
+    const baselineLoss = globalWindow[0]?.loss || 1.0
+    const baselineGrad = globalWindow[0]?.grad_norm_before_clip || 1.0
+
+    for (const row of globalWindow) {
+      if (firstNanStep == null && (row.grad_nan_inf_ratio > 0 || !Number.isFinite(row.loss))) {
+        firstNanStep = row.step
+      }
+      if (
+        firstGradExplosionStep == null &&
+        row.grad_norm_before_clip > Math.max(5.0, baselineGrad * 3.0)
+      ) {
+        firstGradExplosionStep = row.step
+      }
+      if (firstDriftStep == null && row.loss > baselineLoss * 1.5) {
+        firstDriftStep = row.step
       }
     }
-    if (centerRow.grad_norm_before_clip > 5.0) {
+
+    // Determine Chronological Sequence of Events
+    const events = []
+    if (firstDriftStep != null) events.push({ name: 'Loss Shift', step: firstDriftStep })
+    if (firstGradExplosionStep != null)
+      events.push({ name: 'Gradient Explosion', step: firstGradExplosionStep })
+    if (firstNanStep != null) events.push({ name: 'NaN / Inf Collapse', step: firstNanStep })
+
+    events.sort((a, b) => a.step - b.step)
+
+    if (events.length === 0) {
       return {
-        type: 'Gradient Explosion',
-        badgeClass: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-        desc: 'Gradient norm experienced a sharp explosion exceeding typical baseline values.',
+        primaryTrigger: 'Distributional Shift',
+        cascadePath: `Step ${selectedSpike}`,
+        badgeClass: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
+        desc: 'Anomalous deviation detected in loss stream baseline.',
       }
     }
+
+    const primaryTrigger = events[0].name
+    const cascadePath = events.map((e) => `${e.name} (Step ${e.step})`).join(' → ')
+
+    let badgeClass = 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+    if (primaryTrigger === 'NaN / Inf Collapse') {
+      badgeClass = 'bg-red-500/20 text-red-400 border-red-500/30'
+    } else if (primaryTrigger === 'Gradient Explosion') {
+      badgeClass = 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+    }
+
     return {
-      type: 'Distributional Shift / Spike',
-      badgeClass: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
-      desc: 'Significant loss anomaly detected by online change-point / z-score detector.',
+      primaryTrigger,
+      cascadePath,
+      badgeClass,
+      desc: `Chronological Failure Cascade: ${cascadePath}.`,
     }
-  }, [centerRow])
+  }, [globalWindow, selectedSpike])
 
   if (spikes.length === 0) {
     return <EmptyState icon="⚡">No spikes recorded in this run.</EmptyState>
@@ -142,7 +181,7 @@ export default function SpikeInspector() {
           {diagnosis && (
             <div className={`flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium ${diagnosis.badgeClass}`}>
               <Zap className="h-4 w-4" />
-              <span>Root Cause Diagnosis: {diagnosis.type}</span>
+              <span>Primary Trigger: {diagnosis.primaryTrigger}</span>
             </div>
           )}
         </div>
