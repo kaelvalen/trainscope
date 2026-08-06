@@ -131,3 +131,68 @@ class TestSpikeDetector:
         # median=1.05, MAD=0.05 -> robust z for 1.5 is ~6, below threshold 10.
         result = det.update(1.5)
         assert result is None
+
+
+class TestChangePointDetector:
+    def test_changepoint_sudden_spike(self):
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        cp_det = ChangePointDetector(threshold=4.0, min_observations=30)
+        for _ in range(40):
+            cp_det.update(1.0)
+        res = cp_det.update(10.0)
+        assert res is not None
+        assert res >= 4.0
+
+    def test_changepoint_detects_slow_drift_where_zscore_misses(self):
+        """Empirically prove CUSUM catches slow persistent loss drift earlier than Z-Score."""
+        import random
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+        from trainscope.core.detectors.z_score import ZScoreDetector
+
+        random.seed(42)
+        z_det = ZScoreDetector(threshold=3.5, min_observations=30)
+        cp_det = ChangePointDetector(threshold=4.0, slack=0.3, min_observations=30)
+
+        # Baseline warmup phase (50 steps around mean=1.0, std=0.1)
+        for _ in range(50):
+            val = 1.0 + random.gauss(0, 0.05)
+            z_det.update(val)
+            cp_det.update(val)
+
+        # Inject slow cumulative drift (+0.01 per step, i.e., +0.2 std per step)
+        z_step_detected = None
+        cp_step_detected = None
+
+        for step_i in range(1, 35):
+            drift_val = 1.0 + 0.01 * step_i + random.gauss(0, 0.02)
+            z_res = z_det.update(drift_val)
+            cp_res = cp_det.update(drift_val)
+
+            if z_res is not None and z_step_detected is None:
+                z_step_detected = step_i
+            if cp_res is not None and cp_step_detected is None:
+                cp_step_detected = step_i
+
+        # CUSUM must detect the slow drift
+        assert cp_step_detected is not None, "ChangePointDetector failed to detect slow drift"
+        # CUSUM must detect drift earlier than Z-Score (or Z-Score misses it entirely)
+        assert z_step_detected is None or cp_step_detected < z_step_detected, (
+            f"Expected CUSUM ({cp_step_detected}) to trigger earlier than ZScore ({z_step_detected})"
+        )
+
+    def test_changepoint_no_false_positives_on_pure_noise(self):
+        import random
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        random.seed(123)
+        cp_det = ChangePointDetector(threshold=5.0, slack=0.75, min_observations=30)
+        triggers = 0
+        for _ in range(100):
+            val = 1.0 + random.gauss(0, 0.1)
+            res = cp_det.update(val)
+            if res is not None:
+                triggers += 1
+        assert triggers == 0

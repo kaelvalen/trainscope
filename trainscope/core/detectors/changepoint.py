@@ -13,29 +13,34 @@ except Exception:  # pragma: no cover
 
 
 class ChangePointDetector(AnomalyDetector):
-    """Detect distributional shifts in the loss stream.
+    """Detect distributional shifts and cumulative drift in the loss stream.
 
-    If ``ruptures`` is installed, a PELT model is used to detect change points
-    in the recent loss history. Otherwise a lightweight CUSUM implementation
-    is used as a fallback.
+    Uses Page's CUSUM (Cumulative Sum) test to detect subtle, persistent loss
+    drifts before they escalate into full spikes. If ``ruptures`` is installed,
+    a PELT (Pruned Exact Linear Time) model is additionally evaluated on recent
+    history for exact change point localization.
 
     Parameters
     ----------
     threshold:
-        CUSUM multiplier or ``ruptures`` penalty scale.
+        Decision threshold for cumulative sum ($h$).
+    slack:
+        Allowance / shift reference parameter ($k$).
     window:
-        Number of recent observations to consider.
+        Number of recent observations to consider for baseline statistics.
     min_observations:
         Number of observations required before reporting.
     """
 
     def __init__(
         self,
-        threshold: float = 3.5,
+        threshold: float = 5.0,
+        slack: float = 0.75,
         window: int = 200,
         min_observations: int = 30,
     ):
         self.threshold = threshold
+        self.slack = slack
         self.window = window
         self.min_observations = min_observations
         self._history: collections.deque[float] = collections.deque()
@@ -50,53 +55,49 @@ class ChangePointDetector(AnomalyDetector):
         if len(self._history) > self.window:
             self._history.popleft()
 
-    def _history_array(self) -> np.ndarray:
-        return np.fromiter(self._history, dtype=float, count=len(self._history))
-
     def update(self, loss: float) -> float | None:
         if len(self._history) < self.min_observations:
             self._history.append(loss)
-            self._trim()
             return None
 
-        history = self._history_array()
+        history = np.fromiter(self._history, dtype=float, count=len(self._history))
         mean = float(np.mean(history))
-        std = float(np.std(history)) if len(history) > 1 else 0.0
+        std = float(np.std(history))
 
+        if std < 1e-12:
+            std = 1e-12
+
+        # Optional ruptures PELT evaluation if installed
         if rpt is not None and len(history) >= 2 * self.min_observations:
-            signal = history.reshape(-1, 1)
             try:
+                signal = history.reshape(-1, 1)
                 algo = rpt.Pelt(model="l2", min_size=max(2, self.min_observations // 5)).fit(signal)
                 change_points = algo.predict(pen=self.threshold**2)
-                # If the most recent point is flagged as a change, report it.
                 if len(change_points) > 1 and change_points[-2] == len(history):
                     self._history.append(loss)
                     self._trim()
-                    deviation = (loss - mean) / max(std, 1e-12)
-                    return float(deviation)
+                    dev = (loss - mean) / std
+                    return float(dev)
             except Exception:
                 pass
 
-        # Lightweight CUSUM fallback.
-        if std > 0.0:
-            normalized = (loss - mean) / std
-            self._positive_cusum = max(0.0, self._positive_cusum + normalized - self.threshold)
-            self._negative_cusum = min(0.0, self._negative_cusum + normalized + self.threshold)
+        # Page's CUSUM calculation
+        z = (loss - mean) / std
+        self._positive_cusum = max(0.0, self._positive_cusum + (z - self.slack))
+        self._negative_cusum = min(0.0, self._negative_cusum + (z + self.slack))
 
-            self._history.append(loss)
-            self._trim()
+        self._history.append(loss)
+        self._trim()
 
-            if self._positive_cusum > self.threshold or abs(self._negative_cusum) > self.threshold:
-                score = (
-                    self._positive_cusum
-                    if self._positive_cusum > abs(self._negative_cusum)
-                    else self._negative_cusum
-                )
-                self._positive_cusum = 0.0
-                self._negative_cusum = 0.0
-                return float(score)
-        else:
-            self._history.append(loss)
-            self._trim()
+        if self._positive_cusum >= self.threshold:
+            score = self._positive_cusum
+            self._positive_cusum = 0.0
+            self._negative_cusum = 0.0
+            return float(score)
+        elif abs(self._negative_cusum) >= self.threshold:
+            score = self._negative_cusum
+            self._positive_cusum = 0.0
+            self._negative_cusum = 0.0
+            return float(score)
 
         return None
