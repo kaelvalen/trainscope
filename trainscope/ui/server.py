@@ -370,8 +370,12 @@ def create_app(run_path: str) -> FastAPI:
                 last_layers: set[str] = set()
                 while True:
                     global_rows = await _read_arrow(rp / "global.arrow")
-                    if len(global_rows) > last_global_len:
+                    if last_global_len == 0:
                         await websocket.send_json({"type": "global", "payload": global_rows})
+                        last_global_len = len(global_rows)
+                    elif len(global_rows) > last_global_len:
+                        new_rows = global_rows[last_global_len:]
+                        await websocket.send_json({"type": "global_delta", "payload": new_rows})
                         last_global_len = len(global_rows)
 
                     spikes = await _get_spike_steps(rp)
