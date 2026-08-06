@@ -79,6 +79,15 @@ export function RunProvider({ children }) {
         case 'global':
           setGlobalData(Array.isArray(message.payload) ? message.payload : [])
           break
+        case 'global_delta':
+          setGlobalData((prev) => {
+            const newRows = Array.isArray(message.payload) ? message.payload : []
+            if (newRows.length === 0) return prev
+            const existingSteps = new Set(prev.map((r) => r.step))
+            const filtered = newRows.filter((r) => !existingSteps.has(r.step))
+            return [...prev, ...filtered]
+          })
+          break
         case 'layers':
           setLayerNames(Array.isArray(message.payload) ? message.payload : [])
           break
