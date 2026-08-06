@@ -1,6 +1,7 @@
 """Change-point anomaly detector with optional ``ruptures`` backend."""
 
 import collections
+import math
 
 import numpy as np
 
@@ -68,7 +69,13 @@ class ChangePointDetector(AnomalyDetector):
         if std < 1e-12:
             std = 1e-12
 
-        # Optional ruptures PELT evaluation if installed
+        # Optional ruptures PELT evaluation if installed. This runs alongside
+        # (not instead of) the CUSUM test below: a PELT-confirmed change
+        # point at the current observation resets the CUSUM accumulators (so
+        # stale pre-change-point state doesn't leak into the next call) and
+        # is reported using the CUSUM threshold's scale, so both code paths
+        # trigger at the same effective sensitivity regardless of whether
+        # ``ruptures`` is installed.
         if rpt is not None and len(history) >= 2 * self.min_observations:
             try:
                 signal = history.reshape(-1, 1)
@@ -77,8 +84,11 @@ class ChangePointDetector(AnomalyDetector):
                 if len(change_points) > 1 and change_points[-2] == len(history):
                     self._history.append(loss)
                     self._trim()
+                    self._positive_cusum = 0.0
+                    self._negative_cusum = 0.0
                     dev = (loss - mean) / std
-                    return float(dev)
+                    score = math.copysign(max(abs(dev), self.threshold), dev)
+                    return float(score)
             except Exception:
                 pass
 

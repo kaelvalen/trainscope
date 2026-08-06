@@ -29,6 +29,7 @@ GLOBAL_SCHEMA = pa.schema(
         pa.field("is_spike", pa.bool_()),
         pa.field("cpu_memory_mb", pa.float64()),
         pa.field("cuda_memory_mb", pa.float64()),
+        pa.field("spike_score", pa.float64()),
     ]
 )
 
@@ -91,6 +92,9 @@ def _make_global_batch(rows: list[dict]) -> pa.RecordBatch:
             ),
             "cuda_memory_mb": pa.array(
                 [r.get("cuda_memory_mb", 0.0) for r in rows], type=pa.float64()
+            ),
+            "spike_score": pa.array(
+                [r.get("spike_score", 0.0) for r in rows], type=pa.float64()
             ),
         },
         schema=GLOBAL_SCHEMA,

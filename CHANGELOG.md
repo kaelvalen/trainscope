@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Security**: `AuthMiddleware` was defined but never registered with the FastAPI app, so `TRAINSCOPE_API_KEY` / `TRAINSCOPE_BASIC_AUTH` had no effect on any HTTP or WebSocket request. Auth is now wired up and independently enforced on `/ws` (Starlette's `BaseHTTPMiddleware` does not wrap WebSocket connections).
+- **Security**: CORS combined `allow_origins=["*"]` with `allow_credentials=True`, a spec-invalid combination that could allow credentialed cross-origin requests. `allow_credentials` is now `False` (auth here is header-based, not cookie-based).
+- Alerting (Slack/email) was completely non-functional: `TrainScope.step()` called `alerter.notify(...)`, a method no alerter implements (all define `.alert(...)`). The `AttributeError` was silently swallowed by a broad `except Exception` and logged only, so no alert was ever delivered. Alert tests only ever called `.alert()` directly, never through `step()`, so the mismatch went uncaught.
+- `ChangePointDetector`'s optional `ruptures`/PELT code path did not reset the CUSUM accumulators on a detected change point, letting stale state leak into subsequent calls, and returned a raw z-score that was 2-3 orders of magnitude smaller than the CUSUM `threshold` convention — so spike sensitivity silently differed depending on whether `ruptures` was installed. The PELT path now resets CUSUM state and returns a score on the same scale as `threshold`.
+- `TrainScope.step()` used `math.isnan()` to decide whether to skip feeding a loss value to the detector, missing `+inf`/`-inf`, which are equally capable of poisoning a detector's running baseline. Now uses `math.isfinite()`.
+- `TrainScopeConfig()`'s default detector was `z_score`, not the CUSUM change-point detector documented as the flagship feature (and used throughout the quick-start example). The default is now `changepoint`; `make_detector()` no longer blindly injects the z_score-scaled `spike_threshold` into other detectors (which would raise `TypeError` for `percentile` and silently mis-scale `changepoint`).
+- The Spike Inspector's failure-cascade diagnosis read a `row.z_score` field that was never written to the Arrow files, so it always fell back to an ad-hoc heuristic disconnected from the configured detector. The detector's real per-step anomaly score is now persisted as `spike_score` in `global.arrow` and read by the UI.
+
 ## [0.4.0] - Observability UI and Live Run UX
 
 ### Added

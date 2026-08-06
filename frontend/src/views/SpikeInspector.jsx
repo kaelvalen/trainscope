@@ -116,7 +116,11 @@ export default function SpikeInspector() {
       ) {
         firstGradExplosionStep = row.step
       }
-      const zScore = row.z_score ?? (row.loss - baselineLoss) / Math.max(1e-6, baselineLoss * 0.1)
+      // spike_score is the backend detector's actual anomaly score (CUSUM or
+      // z-score, whichever is configured), persisted per step. Older runs
+      // written before this field existed fall back to a rough heuristic.
+      const zScore =
+        row.spike_score || (row.loss - baselineLoss) / Math.max(1e-6, baselineLoss * 0.1)
       if (firstDriftStep == null && (zScore >= 3.5 || row.loss > baselineLoss * 1.5)) {
         firstDriftStep = row.step
       }
