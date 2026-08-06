@@ -18,6 +18,7 @@ from trainscope.core.metrics import (
     compute_weight_histogram,
     compute_weight_metrics,
 )
+from trainscope.integrations import build_alerters, build_callbacks
 from trainscope.io import RemoteWriter
 from trainscope.io.writer import DiskWriter
 from trainscope.plugins import instantiate_metric_plugins, load_detector_plugins
@@ -87,6 +88,9 @@ class TrainScope:
         self._hooks: list[Any] = []
         self._step_idx = 0
         self._last_step_time: float | None = None
+
+        self._callbacks = build_callbacks(self._config.integrations)
+        self._alerters = build_alerters(self._config.alerts)
 
     @property
     def writer(self) -> DiskWriter | RemoteWriter:
@@ -318,6 +322,12 @@ class TrainScope:
 
         self._act_cache.clear()
 
+        for cb in self._callbacks:
+            try:
+                cb.on_step(global_snap, layer_snaps)
+            except Exception:
+                logger.exception("Callback %s failed on step %d", type(cb).__name__, step_idx)
+
         if is_spike:
             window = self._buffer.get_window(
                 step_idx,
@@ -364,6 +374,22 @@ class TrainScope:
             }
 
             logger.info("Spike detected at step %d (score=%.2f)", step_idx, float(score))
+
+            for cb in self._callbacks:
+                try:
+                    cb.on_spike(spike_info, global_snap, layer_snaps)
+                except Exception:
+                    logger.exception(
+                        "Callback %s failed on spike at step %d", type(cb).__name__, step_idx
+                    )
+
+            for alerter in self._alerters:
+                try:
+                    alerter.notify(spike_info)
+                except Exception:
+                    logger.exception(
+                        "Alerter %s failed on spike at step %d", type(alerter).__name__, step_idx
+                    )
 
             if self._config.stop_on_spike:
                 raise StopTraining(step_idx, score)
