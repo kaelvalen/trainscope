@@ -137,12 +137,12 @@ class TestChangePointDetector:
     def test_changepoint_sudden_spike(self):
         from trainscope.core.detectors.changepoint import ChangePointDetector
 
-        cp_det = ChangePointDetector(threshold=4.0, min_observations=30)
+        cp_det = ChangePointDetector(threshold=6.0, min_observations=30)
         for _ in range(40):
             cp_det.update(1.0)
         res = cp_det.update(10.0)
         assert res is not None
-        assert res >= 4.0
+        assert res >= 6.0
 
     def test_changepoint_detects_slow_drift_where_zscore_misses(self):
         """Empirically prove CUSUM catches slow persistent loss drift earlier than Z-Score."""
@@ -196,3 +196,32 @@ class TestChangePointDetector:
             if res is not None:
                 triggers += 1
         assert triggers == 0
+
+    def test_changepoint_robustness_across_seeds_and_scales(self):
+        """Verify false positive resistance across multiple random seeds and noise scales."""
+        import random
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        seeds = [1, 7, 42, 100, 123, 2024, 9999]
+        scales = [0.01, 0.1, 1.0, 10.0, 100.0]
+        means = [0.1, 1.0, 50.0, 1000.0]
+
+        total_runs = 0
+        false_positives = 0
+
+        for seed in seeds:
+            for scale in scales:
+                for mean_val in means:
+                    random.seed(seed + int(scale * 100) + int(mean_val))
+                    cp_det = ChangePointDetector(threshold=6.0, slack=0.8, min_observations=30)
+                    total_runs += 1
+                    for _ in range(120):
+                        val = mean_val + random.gauss(0, scale)
+                        if cp_det.update(val) is not None:
+                            false_positives += 1
+                            break
+
+        assert false_positives == 0, (
+            f"False positives detected: {false_positives} / {total_runs} runs"
+        )

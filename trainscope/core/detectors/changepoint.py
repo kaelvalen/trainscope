@@ -34,8 +34,8 @@ class ChangePointDetector(AnomalyDetector):
 
     def __init__(
         self,
-        threshold: float = 5.0,
-        slack: float = 0.75,
+        threshold: float = 6.0,
+        slack: float = 0.8,
         window: int = 200,
         min_observations: int = 30,
     ):
