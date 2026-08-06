@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - CUSUM Detection, WandB Integration, Spike Story & Live Streaming
+
+### Added
+- **CUSUM Change-Point Anomaly Detection**: Implemented Page's CUSUM algorithm with robust Median/MAD baseline statistics to detect slow, persistent loss drifts ($0.10\sigma - 0.25\sigma$) 5–10 steps before loss explosions.
+- **WandB Zero-Config Integration & Opt-In Alerting**: Automatic passive metric logging when `wandb.run` is active, with explicit opt-in for `wandb.alert()` notifications via `integrations={"wandb": {"alerts": True}}`.
+- **Chronological Spike Story Cascade Analysis**: Automated root cause diagnosis banner and pre-spike window timeline tracing (`Loss Shift` → `Gradient Explosion` → `NaN Collapse`).
+- **Dynamic Plotly Code-Splitting**: Split heavy Plotly charting engine into an isolated lazy chunk, reducing initial UI shell load size from 5.06 MB to <150 KB.
+- **Incremental WebSocket Live Streaming**: High-performance `global_delta` WebSocket streaming appends live steps with zero UI freeze or memory bloat.
+- **Empirical Benchmarks & Verification**: Added 100M–7B model overhead benchmark script and 34,000+ step held-out detector robustness test suite.
+
+### Changed
+- Default UI server now serves compiled React UI assets directly from package.
+- PyPI wheel packaging (`hatch build`) embeds React static assets into PyPI distribution.
+
 ## [0.2.2] - Fix CI and type annotations
 
 ### Fixed
