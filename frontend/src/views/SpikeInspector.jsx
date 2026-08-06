@@ -110,7 +110,8 @@ export default function SpikeInspector() {
       ) {
         firstGradExplosionStep = row.step
       }
-      if (firstDriftStep == null && row.loss > baselineLoss * 1.5) {
+      const zScore = row.z_score ?? (row.loss - baselineLoss) / Math.max(1e-6, baselineLoss * 0.1)
+      if (firstDriftStep == null && (zScore >= 3.5 || row.loss > baselineLoss * 1.5)) {
         firstDriftStep = row.step
       }
     }
