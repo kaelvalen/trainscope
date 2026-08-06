@@ -183,6 +183,7 @@ def test_websocket_streams_global_rows_after_empty_start(tmp_path):
         "is_spike": False,
         "cpu_memory_mb": 0.0,
         "cuda_memory_mb": 0.0,
+        "spike_score": 0.0,
     }
 
     with TestClient(create_app(str(run))) as live_client:
@@ -323,3 +324,51 @@ def test_cors_headers(client):
     r = client.get("/api/health", headers={"Origin": "http://example.com"})
     assert r.status_code == 200
     assert "access-control-allow-origin" in r.headers
+
+
+def test_cors_does_not_combine_wildcard_with_credentials(client):
+    # allow_origins=["*"] + allow_credentials=True is forbidden by the CORS
+    # spec and would let any origin make credentialed requests.
+    r = client.get("/api/health", headers={"Origin": "http://example.com"})
+    assert r.headers.get("access-control-allow-credentials") != "true"
+
+
+def test_unauthenticated_request_rejected_when_api_key_set(run_dir, monkeypatch):
+    monkeypatch.setenv("TRAINSCOPE_API_KEY", "secret-key")
+    client = TestClient(create_app(str(run_dir)))
+
+    r = client.get("/api/global")
+    assert r.status_code == 401
+
+
+def test_authenticated_request_allowed_with_api_key(run_dir, monkeypatch):
+    monkeypatch.setenv("TRAINSCOPE_API_KEY", "secret-key")
+    client = TestClient(create_app(str(run_dir)))
+
+    r = client.get("/api/global", headers={"Authorization": "Bearer secret-key"})
+    assert r.status_code == 200
+
+
+def test_health_stays_public_when_api_key_set(run_dir, monkeypatch):
+    monkeypatch.setenv("TRAINSCOPE_API_KEY", "secret-key")
+    client = TestClient(create_app(str(run_dir)))
+
+    r = client.get("/api/health")
+    assert r.status_code == 200
+
+
+def test_websocket_rejected_without_api_key(run_dir, monkeypatch):
+    monkeypatch.setenv("TRAINSCOPE_API_KEY", "secret-key")
+    client = TestClient(create_app(str(run_dir)))
+
+    with pytest.raises(Exception):
+        with client.websocket_connect("/ws"):
+            pass
+
+
+def test_websocket_allowed_with_api_key(run_dir, monkeypatch):
+    monkeypatch.setenv("TRAINSCOPE_API_KEY", "secret-key")
+    client = TestClient(create_app(str(run_dir)))
+
+    with client.websocket_connect("/ws", headers={"Authorization": "Bearer secret-key"}) as ws:
+        assert ws.receive_json()["type"] == "meta"

@@ -101,6 +101,46 @@ def test_integration_detects_spike_and_creates_artifacts(tmp_path: Path) -> None
     assert (run_dir / "rng_states" / "step_10.pkl").exists()
 
 
+def test_integration_spike_invokes_alerter_via_alert_method(tmp_path: Path) -> None:
+    """End-to-end: TrainScope.step() must call alerter.alert(), the only
+    method every built-in alerter (NullAlerter/SlackAlerter/EmailAlerter)
+    actually implements. A regression here (e.g. calling a nonexistent
+    ``.notify()``) is swallowed by scope.py's broad except-and-log, so it
+    must be caught by going through step() rather than calling alert()
+    directly."""
+    torch.manual_seed(0)
+
+    model = nn.Sequential(nn.Linear(8, 4), nn.ReLU(), nn.Linear(4, 1))
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+    config = TrainScopeConfig(run_dir=str(tmp_path), run_name="alert_run")
+
+    scope = TrainScope(model, optimizer, config).attach()
+
+    calls = []
+
+    class RecordingAlerter:
+        def alert(self, spike_info, global_snap=None, layer_snaps=None):
+            calls.append(spike_info)
+
+    scope._alerters = [RecordingAlerter()]
+
+    y = torch.randn(4, 1)
+    for step in range(50):
+        optimizer.zero_grad()
+        x = torch.randn(4, 8)
+        loss = F.mse_loss(model(x), y)
+        if step == 40:
+            loss = loss * 100.0
+        loss.backward()
+        scope.step(loss.item(), batch_index=step)
+        optimizer.step()
+
+    scope.detach()
+
+    assert len(calls) >= 1
+    assert any(c["step"] == 40 for c in calls)
+
+
 def test_integration_server_reads_run_directory(tmp_path: Path) -> None:
     _run_training(tmp_path)
     run_dir = tmp_path / "integration_run"

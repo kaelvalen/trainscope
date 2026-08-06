@@ -17,6 +17,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
+from trainscope.ui.auth import auth_enabled, auth_middleware_factory, verify_request
+
 logger = logging.getLogger("trainscope")
 
 
@@ -204,13 +206,18 @@ def create_app(run_path: str) -> FastAPI:
         yield
 
     app = FastAPI(title="TrainScope UI", lifespan=_lifespan)
+    # Auth (TRAINSCOPE_API_KEY / TRAINSCOPE_BASIC_AUTH) uses header-based
+    # credentials, not cookies, so allow_credentials must stay False: the
+    # CORS spec forbids combining a wildcard origin with allow_credentials,
+    # and enabling it would let any origin make credentialed requests.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_credentials=True,
+        allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(auth_middleware_factory())
 
     @app.middleware("http")
     async def disable_api_cache(request, call_next):
@@ -364,6 +371,11 @@ def create_app(run_path: str) -> FastAPI:
     # ------------------------------------------------------------------ #
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):
+        # AuthMiddleware is a BaseHTTPMiddleware and never runs for WebSocket
+        # connections (Starlette limitation), so auth must be re-checked here.
+        if auth_enabled() and not verify_request(websocket):
+            await websocket.close(code=1008)
+            return
         await websocket.accept()
         try:
             meta = await _read_json_optional(rp / "meta.json") or {}

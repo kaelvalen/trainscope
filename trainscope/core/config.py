@@ -132,8 +132,9 @@ class TrainScopeConfig:
     # schemes include ``s3://``, ``gs://``, ``az://`` and ``file://``.
     storage_uri: str | None = None
     # Anomaly detector configuration. A string selects a detector by name; a
-    # dict provides ``name`` plus constructor kwargs. Defaults to a z-score
-    # detector using ``spike_threshold``.
+    # dict provides ``name`` plus constructor kwargs. Defaults to the CUSUM
+    # change-point detector (see ``ChangePointDetector``), which catches
+    # subtle, persistent drift that a plain z-score threshold misses.
     detector: str | dict | None = None
     # Explicit plugin class paths (e.g. ``myplugin.MyMetric``) to load in
     # addition to entry-point discovered plugins.
@@ -179,7 +180,12 @@ class TrainScopeConfig:
         if isinstance(self.detector, str):
             self.detector = {"name": self.detector}
         if self.detector is None:
-            self.detector = {"name": "z_score", "threshold": self.spike_threshold}
+            # CUSUM's threshold ("h", decision threshold for the cumulative
+            # sum) is on a different scale than spike_threshold (a raw
+            # z-score cutoff, used by the z_score detector). Do not inject
+            # spike_threshold here; let ChangePointDetector use its own
+            # validated default.
+            self.detector = {"name": "changepoint"}
         if not isinstance(self.detector, dict) or "name" not in self.detector:
             raise ValueError("detector must be a detector name or a dict with a 'name' key")
 
