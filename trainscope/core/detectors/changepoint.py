@@ -61,8 +61,9 @@ class ChangePointDetector(AnomalyDetector):
             return None
 
         history = np.fromiter(self._history, dtype=float, count=len(self._history))
-        mean = float(np.mean(history))
-        std = float(np.std(history))
+        mean = float(np.median(history))
+        mad = float(np.median(np.abs(history - mean)))
+        std = float(mad * 1.4826)
 
         if std < 1e-12:
             std = 1e-12
