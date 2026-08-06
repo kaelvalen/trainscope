@@ -196,12 +196,6 @@ class RankedParams(BaseModel):
 def create_app(run_path: str) -> FastAPI:
     rp = Path(run_path).resolve()
     static_dir = Path(__file__).parent / "static"
-    fallback_path = Path(__file__).parent / "fallback.html"
-    _fallback_html = (
-        fallback_path.read_text(encoding="utf-8")
-        if fallback_path.exists()
-        else "<html><body><h1>TrainScope</h1><p>UI build not found.</p></body></html>"
-    )
     _cache = _TTLCache(maxsize=128, ttl=60.0)
 
     @asynccontextmanager
@@ -420,7 +414,30 @@ def create_app(run_path: str) -> FastAPI:
 
         @app.get("/")
         async def index() -> HTMLResponse:
-            return HTMLResponse(content=_fallback_html)
+            return HTMLResponse(
+                content="""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>TrainScope UI</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background: #0f172a; color: #f8fafc; display: flex; height: 100vh; align-items: center; justify-content: center; margin: 0; }
+    .card { background: #1e293b; padding: 2.5rem; border-radius: 1rem; border: 1px solid #334155; max-width: 520px; text-align: center; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; color: #38bdf8; }
+    p { color: #94a3b8; line-height: 1.6; font-size: 0.95rem; }
+    code { background: #0f172a; padding: 0.3rem 0.6rem; border-radius: 0.375rem; color: #f43f5e; font-family: monospace; font-size: 0.9em; border: 1px solid #334155; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>TrainScope UI</h1>
+    <p>React UI assets were not found in <code>trainscope/ui/static</code>.</p>
+    <p>If you are running from a local git repository, build the frontend:</p>
+    <p><code>cd frontend && npm install && npm run build</code></p>
+  </div>
+</body>
+</html>"""
+            )
 
     return app
 

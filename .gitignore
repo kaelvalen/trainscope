@@ -41,6 +41,7 @@ trainscope/ui/static/
 
 # Runtime / local data
 trainscope_runs/
+benchmark_runs/
 *.parquet
 
 # IDE / editor
