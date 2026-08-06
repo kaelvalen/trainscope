@@ -18,6 +18,7 @@ class FakeWandbRun:
 
 def _mock_wandb_module(fake_run: FakeWandbRun) -> MagicMock:
     module = MagicMock()
+    module.run = None
     module.init.return_value = fake_run
     return module
 
@@ -26,6 +27,22 @@ class TestBuildCallbacks:
     def test_empty_config_returns_empty_list(self):
         assert build_callbacks(None) == []
         assert build_callbacks({}) == []
+
+    def test_auto_detect_wandb_active_run(self):
+        fake_run = FakeWandbRun()
+        module = MagicMock()
+        module.run = fake_run
+        with patch.dict("sys.modules", {"wandb": module}):
+            callbacks = build_callbacks({})
+            assert len(callbacks) == 1
+
+    def test_disable_wandb_auto_detection_escape_hatch(self):
+        fake_run = FakeWandbRun()
+        module = MagicMock()
+        module.run = fake_run
+        with patch.dict("sys.modules", {"wandb": module}):
+            callbacks = build_callbacks({"wandb": False})
+            assert callbacks == []
 
     def test_unknown_integration_is_skipped(self):
         callbacks = build_callbacks({"unknown": {"foo": "bar"}})

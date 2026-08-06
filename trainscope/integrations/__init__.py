@@ -22,6 +22,9 @@ def _safe_pop(cfg: dict[str, Any], key: str) -> Any:
 def build_callbacks(integrations_config: dict[str, Any] | None) -> list[Any]:
     """Build experiment-tracker callbacks from a config mapping.
 
+    If WandB is imported and a run is active (`wandb.run`), it is automatically
+    detected unless explicitly disabled via `integrations={"wandb": False}`.
+
     Example config::
 
         {
@@ -31,10 +34,10 @@ def build_callbacks(integrations_config: dict[str, Any] | None) -> list[Any]:
         }
     """
     callbacks: list[Any] = []
-    if not integrations_config:
-        return callbacks
+    cfg_dict = integrations_config if isinstance(integrations_config, dict) else {}
 
-    for name, cfg in integrations_config.items():
+    # Explicit integrations
+    for name, cfg in cfg_dict.items():
         if cfg is None or cfg is False:
             continue
         kwargs = cfg if isinstance(cfg, dict) else {}
@@ -53,6 +56,21 @@ def build_callbacks(integrations_config: dict[str, Any] | None) -> list[Any]:
             callbacks.append(MlflowCallback(**kwargs))
         else:
             logger.warning("Unknown integration '%s'; skipping", name)
+
+    # Automatic WandB detection: if wandb is loaded & wandb.run is active,
+    # and wandb was not explicitly disabled or already configured.
+    if cfg_dict.get("wandb") is not False and "wandb" not in cfg_dict:
+        import sys
+
+        wandb_mod = sys.modules.get("wandb")
+        if wandb_mod is not None and getattr(wandb_mod, "run", None) is not None:
+            try:
+                from trainscope.integrations.wandb_ import WandbCallback
+
+                callbacks.append(WandbCallback())
+                logger.info("Auto-detected active WandB run; attached WandbCallback")
+            except Exception:
+                logger.debug("WandB module found but WandbCallback initialization skipped")
 
     return callbacks
 

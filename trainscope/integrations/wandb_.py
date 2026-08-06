@@ -24,7 +24,11 @@ class WandbCallback:
                 "WandbCallback requires wandb. Install it with: pip install trainscope[integrations]"
             ) from exc
 
-        self._run = wandb.init(project=project, entity=entity, **kwargs)
+        active_run = getattr(wandb, "run", None)
+        if active_run is not None:
+            self._run = active_run
+        else:
+            self._run = wandb.init(project=project, entity=entity, **kwargs)
 
     def on_step(
         self,
@@ -75,5 +79,13 @@ class WandbCallback:
         metrics = {k: v for k, v in metrics.items() if v is not None}
         try:
             self._run.log({"spike": True, **metrics}, step=step)
+            if hasattr(self._run, "alert"):
+                z_score = spike_info.get("z_score", 0.0)
+                loss_val = spike_info.get("loss", 0.0)
+                self._run.alert(
+                    title=f"TrainScope Loss Spike Detected at Step {step}",
+                    text=f"Loss spike detected at step {step} (z-score: {z_score:.2f}, loss: {loss_val:.4f}).",
+                    level="WARN",
+                )
         except Exception:
             logger.exception("Failed to log spike to WandB")
