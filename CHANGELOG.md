@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - Release Pipeline Hardening & Python 3.14 Support
+
+### Added
+- Python 3.14 support: added to the CI test matrix and package classifiers, verified against the full dependency set (`torch`, `pyarrow`, `numpy`, `scipy`) and test suite.
+- `publish.yml` now verifies the pushed tag matches `pyproject.toml`'s version before building, and runs `twine check` on the built artifacts before upload.
+
+### Changed
+- `publish.yml` now runs the full CI test suite (via a reusable `ci.yml` workflow) as a required gate before publishing. Tag pushes don't trigger `ci.yml`'s own `push` trigger, so releases were previously built and uploaded to PyPI with no test or lint run at all.
+- `ci.yml`'s frontend job now runs the Vitest unit test suite (`npm test`), which was previously never executed in CI.
+- Removed a duplicate `pytest tests/test_integration.py` step in `ci.yml`; `make test` already runs the full `tests/` directory, including integration tests.
+
 ### Fixed
 - **Security**: `AuthMiddleware` was defined but never registered with the FastAPI app, so `TRAINSCOPE_API_KEY` / `TRAINSCOPE_BASIC_AUTH` had no effect on any HTTP or WebSocket request. Auth is now wired up and independently enforced on `/ws` (Starlette's `BaseHTTPMiddleware` does not wrap WebSocket connections).
 - **Security**: CORS combined `allow_origins=["*"]` with `allow_credentials=True`, a spec-invalid combination that could allow credentialed cross-origin requests. `allow_credentials` is now `False` (auth here is header-based, not cookie-based).
@@ -15,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TrainScope.step()` used `math.isnan()` to decide whether to skip feeding a loss value to the detector, missing `+inf`/`-inf`, which are equally capable of poisoning a detector's running baseline. Now uses `math.isfinite()`.
 - `TrainScopeConfig()`'s default detector was `z_score`, not the CUSUM change-point detector documented as the flagship feature (and used throughout the quick-start example). The default is now `changepoint`; `make_detector()` no longer blindly injects the z_score-scaled `spike_threshold` into other detectors (which would raise `TypeError` for `percentile` and silently mis-scale `changepoint`).
 - The Spike Inspector's failure-cascade diagnosis read a `row.z_score` field that was never written to the Arrow files, so it always fell back to an ad-hoc heuristic disconnected from the configured detector. The detector's real per-step anomaly score is now persisted as `spike_score` in `global.arrow` and read by the UI.
+- The Spike Inspector's drift scan used `row.spike_score || fallback`, so the legitimate value `0.0` (written on every non-spike step) fell through to the old heuristic just like a missing field would, effectively bypassing the detector's real score for most of the scan. Changed to `??` so only a genuinely absent field (older runs) falls back.
 
 ## [0.4.0] - Observability UI and Live Run UX
 

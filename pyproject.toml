@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trainscope"
-version = "0.4.0"
+version = "0.5.0"
 description = "Post-mortem debugger for LLM training loss spikes"
 readme = "README.md"
 license = { text = "MIT" }
@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Debuggers",
 ]
