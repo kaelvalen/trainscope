@@ -11,7 +11,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # github.workflow_ref (not github.workflow) so this group stays distinct
+  # from the caller's when ci.yml runs as a reusable workflow — github.workflow
+  # resolves to the *caller's* name in that context, and colliding with the
+  # caller's own concurrency group causes GitHub to cancel the whole run.
+  group: ${{ github.workflow_ref }}
   cancel-in-progress: true
 
 jobs:
