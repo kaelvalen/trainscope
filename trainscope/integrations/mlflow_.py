@@ -62,7 +62,11 @@ class MlflowCallback:
                         top_layer[1].get("grad_l2_norm", 0.0),
                         step=step,
                     )
-                    self._mlflow.log_param("top_grad_layer", top_layer[0])
+                    # log_text (an artifact that is overwritten on each call)
+                    # rather than log_param: MLflow forbids re-logging a param
+                    # with a different value within a run, and the top layer
+                    # changes across steps.
+                    self._mlflow.log_text(str(top_layer[0]), artifact_file="top_grad_layer.txt")
         except Exception:
             logger.exception("Failed to log step to MLflow")
 
@@ -80,6 +84,9 @@ class MlflowCallback:
         metrics = {k: v for k, v in metrics.items() if v is not None}
         try:
             self._mlflow.log_metrics(metrics, step=step)
-            self._mlflow.log_param("spike_step", step)
+            # A metric, not a param: log_param with a changing value is
+            # rejected by MLflow on the second spike.
+            if step is not None:
+                self._mlflow.log_metric("spike_step", step, step=step)
         except Exception:
             logger.exception("Failed to log spike to MLflow")

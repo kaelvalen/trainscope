@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import os
@@ -166,27 +167,15 @@ def _table_to_rows(table: pa.Table) -> list[dict]:
     return rows
 
 
-def _read_ipc_file_rows(path: Path) -> list[dict]:
-    """Read rows from a legacy IPC *file* (schema + batches + footer)."""
-    reader = ipc.open_file(str(path))
-    try:
-        table = reader.read_all()
-    finally:
-        close = getattr(reader, "close", None)
-        if callable(close):
-            close()
-    return _table_to_rows(table)
-
-
-def _read_ipc_stream_rows(path: Path) -> list[dict]:
-    """Read rows from an IPC *stream* file, tolerating a truncated tail.
+def _read_ipc_stream_rows_bytes(data: bytes) -> list[dict]:
+    """Read rows from an IPC *stream*, tolerating a truncated tail.
 
     The DiskWriter appends batches to live stream files; a crash can leave the
     file without its end-of-stream marker (still readable) or cut a message in
     half (the incomplete tail must be dropped, not fail the whole read).
     """
     try:
-        reader = ipc.open_stream(str(path))
+        reader = ipc.open_stream(io.BytesIO(data))
     except Exception:
         return []
     batches = []
@@ -220,9 +209,32 @@ def read_arrow_rows_sync(path: Path) -> list[dict]:
     if not path.exists() or path.stat().st_size == 0:
         return []
     try:
-        return _read_ipc_file_rows(path)
+        with open(path, "rb") as f:
+            return read_arrow_rows_bytes(f.read())
     except Exception:
-        return _read_ipc_stream_rows(path)
+        return []
+
+
+def read_arrow_rows_bytes(data: bytes) -> list[dict]:
+    """Read rows from Arrow IPC bytes written in either on-disk format.
+
+    Tolerates a truncated tail (a crash mid-write cuts the last message; the
+    incomplete tail is dropped rather than failing the whole read).
+    """
+    if not data:
+        return []
+    try:
+        reader = ipc.open_file(io.BytesIO(data))
+        try:
+            table = reader.read_all()
+        finally:
+            close = getattr(reader, "close", None)
+            if callable(close):
+                close()
+        return _table_to_rows(table)
+    except Exception:
+        pass
+    return _read_ipc_stream_rows_bytes(data)
 
 
 class DiskWriter:
