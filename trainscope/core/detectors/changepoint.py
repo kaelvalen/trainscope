@@ -1,7 +1,6 @@
 """Change-point anomaly detector with optional ``ruptures`` backend."""
 
 import collections
-import math
 
 import numpy as np
 
@@ -20,6 +19,15 @@ class ChangePointDetector(AnomalyDetector):
     drifts before they escalate into full spikes. If ``ruptures`` is installed,
     a PELT (Pruned Exact Linear Time) model is additionally evaluated on recent
     history for exact change point localization.
+
+    Score semantics: CUSUM-triggered spikes return the cumulative sum at
+    trigger time, so ``|score| >= threshold`` always holds. PELT-triggered
+    spikes return the raw median/MAD-normalized deviation
+    ``(loss - median) / (1.4826 * MAD)`` of the triggering observation,
+    preserving the true magnitude of the jump: subtle change points can carry
+    ``|score|`` below ``threshold``. Since 0.6.0 the PELT score is no longer
+    clamped to ``threshold`` (it previously made every PELT spike look
+    identical at ``|score| == threshold``).
 
     Parameters
     ----------
@@ -73,9 +81,8 @@ class ChangePointDetector(AnomalyDetector):
         # (not instead of) the CUSUM test below: a PELT-confirmed change
         # point at the current observation resets the CUSUM accumulators (so
         # stale pre-change-point state doesn't leak into the next call) and
-        # is reported using the CUSUM threshold's scale, so both code paths
-        # trigger at the same effective sensitivity regardless of whether
-        # ``ruptures`` is installed.
+        # is reported with its raw deviation magnitude (see the class
+        # docstring for score semantics), not a value clamped to ``threshold``.
         if rpt is not None and len(history) >= 2 * self.min_observations:
             try:
                 signal = history.reshape(-1, 1)
@@ -86,9 +93,7 @@ class ChangePointDetector(AnomalyDetector):
                     self._trim()
                     self._positive_cusum = 0.0
                     self._negative_cusum = 0.0
-                    dev = (loss - mean) / std
-                    score = math.copysign(max(abs(dev), self.threshold), dev)
-                    return float(score)
+                    return float((loss - mean) / std)
             except Exception:
                 pass
 

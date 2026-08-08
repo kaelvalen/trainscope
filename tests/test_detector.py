@@ -344,3 +344,78 @@ class TestChangePointDetector:
         assert fp_rate <= 0.001, (
             f"False positive step rate on held-out set exceeded 0.1%: {false_positives} / {total_steps} steps ({fp_rate:.4%})"
         )
+
+    def test_pelt_path_preserves_raw_deviation_magnitude(self, monkeypatch):
+        """PELT-triggered spikes must return the raw normalized deviation, not
+        a value clamped to the threshold: subtle change points (|dev| below
+        threshold) must carry their true (small) magnitude instead of a flat
+        |score| == threshold that makes every PELT spike look identical."""
+        import pytest
+
+        from trainscope.core.detectors import changepoint as cp_mod
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        class _FakePelt:
+            def __init__(self, *args, **kwargs):
+                self._signal: list = []
+
+            def fit(self, signal):
+                self._signal = signal
+                return self
+
+            def predict(self, pen):
+                # Always report a change point at the current observation.
+                return [len(self._signal), len(self._signal)]
+
+        class _FakeRpt:
+            Pelt = _FakePelt
+
+        monkeypatch.setattr(cp_mod, "rpt", _FakeRpt)
+
+        det = ChangePointDetector(threshold=6.0, min_observations=10)
+        # Median 1.05, MAD 0.05 -> std = 1.4826 * 0.05 = 0.07413.
+        for _ in range(20):
+            det.update(1.0)
+            det.update(1.1)
+
+        # dev = (1.2 - 1.05) / 0.07413 ≈ 2.02, well below threshold=6.0.
+        res = det.update(1.2)
+        assert res is not None
+        expected = (1.2 - 1.05) / (1.4826 * 0.05)
+        assert res == pytest.approx(expected)
+        assert abs(res) < 6.0, "PELT score must not be clamped up to the threshold"
+
+    def test_pelt_path_preserves_sign_and_magnitude(self, monkeypatch):
+        import pytest
+
+        from trainscope.core.detectors import changepoint as cp_mod
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        class _FakePelt:
+            def __init__(self, *args, **kwargs):
+                self._signal: list = []
+
+            def fit(self, signal):
+                self._signal = signal
+                return self
+
+            def predict(self, pen):
+                return [len(self._signal), len(self._signal)]
+
+        class _FakeRpt:
+            Pelt = _FakePelt
+
+        monkeypatch.setattr(cp_mod, "rpt", _FakeRpt)
+
+        det = ChangePointDetector(threshold=6.0, min_observations=10)
+        for _ in range(20):
+            det.update(1.0)
+            det.update(1.1)
+
+        # Negative jump of the same magnitude as the positive test above.
+        res = det.update(0.9)
+        assert res is not None
+        expected = (0.9 - 1.05) / (1.4826 * 0.05)
+        assert res == pytest.approx(expected)
+        assert res < 0
+        assert abs(res) < 6.0
