@@ -5,10 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- `RollingBuffer` getters keep their O(n) segment merge but restore a cheap safety net: an O(n) order check falls back to an explicit sort if the two segments are ever out of chronological order, so a future insertion path that violates the segment-ordering invariant cannot silently produce out-of-order rows (the defensive sort removed in 0.7.0 would otherwise have been lost).
+
 ## [0.7.1] - General Bugfix Release
 
 ### Changed
-- `RemoteWriter` (S3/GCS/Azure) now rewrites its objects on the same `compaction_every_n_steps` cadence instead of every 100 rows, bounding write amplification on large runs; rows are buffered in memory in between (remote objects cannot be appended to, and are not watchable live by the UI server anyway). It also reads both on-disk formats (legacy IPC files and the stream format) and writes stream-format objects for consistency.
+- `RemoteWriter` (S3/GCS/Azure) now rewrites its objects on the same `compaction_every_n_steps` cadence instead of every 100 rows, roughly a 10x reduction in full-rewrite frequency on large runs. This mitigates but does not eliminate the O(n²) rewrite cost — object stores offer no native append, so the `DiskWriter`'s append-only write path is not achievable remotely. It also reads both on-disk formats (legacy IPC files and the stream format) and writes stream-format objects for consistency.
 
 ### Fixed
 - The MLflow integration logged `top_grad_layer` and `spike_step` with `log_param`, which MLflow rejects on the second call with a different value (`Changing param values is not allowed`); the error was swallowed by `except Exception`, so MLflow users silently lost all logging after the first step/spike. The layer name is now logged as a text artifact (`top_grad_layer.txt`) and the spike step as a metric.

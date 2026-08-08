@@ -57,6 +57,10 @@ class RemoteWriter:
     ``config.compaction_every_n_steps`` rows (default 1000) and on
     ``flush()``/``close()``; new rows are buffered in memory in between, so
     remote artifacts lag the training run by up to that many steps.
+
+    Note this mitigates rather than eliminates the O(n²) total rewrite cost of
+    full rewrites: object stores offer no native append, so the append-only
+    write path of :class:`DiskWriter` is not achievable for remote storage.
     """
 
     def __init__(
