@@ -31,11 +31,16 @@ class TestTrainScopeConfig:
             "histogram_every_n_steps",
             "activation_metrics_every_n_steps",
             "trace_every_n_steps",
+            "compaction_every_n_steps",
         ],
     )
     def test_every_n_steps_positive(self, field):
         with pytest.raises(ValueError, match=field):
             TrainScopeConfig(**{field: 0})  # type: ignore[arg-type]
+
+    def test_compaction_every_n_steps_default(self):
+        assert TrainScopeConfig().compaction_every_n_steps == 1000
+        assert TrainScopeConfig.from_env(prefix="X_").compaction_every_n_steps == 1000
 
     def test_n_histogram_bins_validation(self):
         with pytest.raises(ValueError, match="n_histogram_bins"):
@@ -62,6 +67,7 @@ class TestTrainScopeConfig:
         assert d["track_memory"] is False
         assert d["checkpoint_on_spike"] is True
         assert d["rng_every_n_steps"] == 10
+        assert d["compaction_every_n_steps"] == 1000
         assert d["resume"] is True
 
     def test_device_none_serializes_to_none(self):

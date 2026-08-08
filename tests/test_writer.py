@@ -5,7 +5,7 @@ import pyarrow.ipc as ipc
 import torch
 
 from trainscope.core.config import TrainScopeConfig
-from trainscope.io.writer import DiskWriter
+from trainscope.io.writer import DiskWriter, read_arrow_rows_sync
 
 
 def make_global_snap(step: int = 0):
@@ -92,11 +92,10 @@ class TestDiskWriter:
         writer.flush()
         writer.close()
 
-        reader = ipc.open_file(str(run_path / "layers" / "layer0.arrow"))
-        table = reader.read_all()
-        assert table.column("act_kurtosis").to_pylist() == [2.5, None]
-        assert table.column("act_mean").to_pylist() == [0.0, None]
-        assert table.column("act_median").to_pylist() == [None, None]
+        rows = read_arrow_rows_sync(run_path / "layers" / "layer0.arrow")
+        assert [r["act_kurtosis"] for r in rows] == [2.5, None]
+        assert [r["act_mean"] for r in rows] == [0.0, None]
+        assert [r["act_median"] for r in rows] == [None, None]
 
     def test_append_global_flush_creates_arrow(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -111,12 +110,11 @@ class TestDiskWriter:
         arrow_file = run_path / "global.arrow"
         assert arrow_file.exists()
 
-        reader = ipc.open_file(str(arrow_file))
-        table = reader.read_all()
-        assert table.num_rows == 5
-        assert "step" in table.schema.names
-        assert "loss" in table.schema.names
-        assert "is_spike" in table.schema.names
+        rows = read_arrow_rows_sync(arrow_file)
+        assert len(rows) == 5
+        assert "step" in rows[0]
+        assert "loss" in rows[0]
+        assert "is_spike" in rows[0]
 
     def test_global_arrow_values_correct(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -130,12 +128,10 @@ class TestDiskWriter:
         writer.flush()
         writer.close()
 
-        reader = ipc.open_file(str(run_path / "global.arrow"))
-        table = reader.read_all()
-        d = table.to_pydict()
-        assert d["step"][0] == 42
-        assert abs(d["loss"][0] - 2.718) < 1e-6
-        assert d["is_spike"][0] is True
+        d = read_arrow_rows_sync(run_path / "global.arrow")
+        assert d[0]["step"] == 42
+        assert abs(d[0]["loss"] - 2.718) < 1e-6
+        assert d[0]["is_spike"] is True
 
     def test_append_layer_flush_creates_arrow(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -150,11 +146,10 @@ class TestDiskWriter:
         layer_file = run_path / "layers" / "transformer.layer0.weight.arrow"
         assert layer_file.exists()
 
-        reader = ipc.open_file(str(layer_file))
-        table = reader.read_all()
-        assert table.num_rows == 3
-        assert "grad_l2_norm" in table.schema.names
-        assert "hist_counts" in table.schema.names
+        rows = read_arrow_rows_sync(layer_file)
+        assert len(rows) == 3
+        assert "grad_l2_norm" in rows[0]
+        assert "hist_counts" in rows[0]
 
     def test_layer_with_slash_in_name(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -195,9 +190,8 @@ class TestDiskWriter:
 
         writer.close()
 
-        reader = ipc.open_file(str(arrow_file))
-        table = reader.read_all()
-        assert table.num_rows == 100
+        rows = read_arrow_rows_sync(arrow_file)
+        assert len(rows) == 100
 
     def test_directory_structure_created(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -290,10 +284,9 @@ class TestDiskWriter:
         writer2.flush()
         writer2.close()
 
-        reader = ipc.open_file(str(run_path / "global.arrow"))
-        table = reader.read_all()
-        assert table.num_rows == 10
-        assert list(table.column("step").to_pylist()) == list(range(10))
+        rows = read_arrow_rows_sync(run_path / "global.arrow")
+        assert len(rows) == 10
+        assert [r["step"] for r in rows] == list(range(10))
 
     def test_resume_preserves_rows_across_multiple_flushes(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -314,10 +307,9 @@ class TestDiskWriter:
         writer2.flush()
         writer2.close()
 
-        reader = ipc.open_file(str(run_path / "global.arrow"))
-        table = reader.read_all()
-        assert table.num_rows == 9
-        assert list(table.column("step").to_pylist()) == list(range(9))
+        rows = read_arrow_rows_sync(run_path / "global.arrow")
+        assert len(rows) == 9
+        assert [r["step"] for r in rows] == list(range(9))
 
     def test_resume_appends_layer_rows(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -334,9 +326,8 @@ class TestDiskWriter:
         writer2.flush()
         writer2.close()
 
-        reader = ipc.open_file(str(run_path / "layers" / "layer0.arrow"))
-        table = reader.read_all()
-        assert table.num_rows == 3
+        rows = read_arrow_rows_sync(run_path / "layers" / "layer0.arrow")
+        assert len(rows) == 3
 
     def test_manifest_written_on_close(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
@@ -370,3 +361,168 @@ class TestDiskWriter:
         assert loaded["step"] == 7
         assert "model_state_dict" in loaded
         assert "optimizer_state_dict" in loaded
+
+    # ------------------------------------------------------------------ #
+    # Append-only + compaction behaviour
+    # ------------------------------------------------------------------ #
+    def test_file_readable_live_before_close(self, tmp_path):
+        """The UI server must be able to read the Arrow files while the
+        writer is still open: every flush publishes the new rows."""
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+
+        for i in range(7):
+            writer.append_global(make_global_snap(i))
+        writer.flush()
+        rows = read_arrow_rows_sync(run_path / "global.arrow")
+        assert [r["step"] for r in rows] == list(range(7))
+
+        for i in range(7, 12):
+            writer.append_global(make_global_snap(i))
+        writer.flush()
+        rows = read_arrow_rows_sync(run_path / "global.arrow")
+        assert [r["step"] for r in rows] == list(range(12))
+
+        writer.append_layer("layer0", make_layer_snap(0))
+        writer.flush()
+        rows = read_arrow_rows_sync(run_path / "layers" / "layer0.arrow")
+        assert [r["step"] for r in rows] == [0]
+
+        writer.close()
+
+    def test_compaction_preserves_all_rows(self, tmp_path):
+        """Frequent compactions (small compaction_every_n_steps) must not
+        lose or reorder any row, and the file must stay readable."""
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path), run_name="test_run", compaction_every_n_steps=6
+        )
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+
+        for i in range(25):
+            writer.append_global(make_global_snap(i))
+            if i % 5 == 4:
+                writer.flush()
+                # Readable at every flush, including right after a compaction.
+                rows = read_arrow_rows_sync(run_path / "global.arrow")
+                assert [r["step"] for r in rows] == list(range(i + 1))
+
+        writer.close()
+        rows = read_arrow_rows_sync(run_path / "global.arrow")
+        assert [r["step"] for r in rows] == list(range(25))
+
+    def test_truncated_tail_is_dropped_not_fatal(self, tmp_path):
+        """A file whose tail was cut mid-message (simulated crash) must still
+        yield all complete rows instead of failing the whole read."""
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+        for i in range(25):
+            writer.append_global(make_global_snap(i))
+        writer.close()
+
+        path = run_path / "global.arrow"
+        size = path.stat().st_size
+        with open(path, "r+b") as f:
+            f.truncate(size - 12)  # cut the EOS marker and part of the last batch
+
+        rows = read_arrow_rows_sync(path)
+        assert [r["step"] for r in rows] == list(range(20))
+
+    def test_resume_legacy_file_format(self, tmp_path):
+        """Runs written by older trainscope versions use the legacy IPC file
+        format; resuming them must load existing rows and rewrite the file
+        into the appendable stream format on the next flush."""
+        import pyarrow as pa
+        import pyarrow.ipc as ipc
+
+        run_path = tmp_path / "test_run"
+        run_path.mkdir()
+        (run_path / "layers").mkdir()
+
+        legacy = pa.record_batch(
+            {
+                "step": pa.array([0, 1], type=pa.int64()),
+                "loss": pa.array([1.0, 2.0], type=pa.float64()),
+                "grad_norm_before_clip": pa.array([0.5, 0.6], type=pa.float64()),
+                "grad_norm_after_clip": pa.array([0.5, 0.6], type=pa.float64()),
+                "lr": pa.array([1e-3, 1e-3], type=pa.float64()),
+                "optimizer_v_norm": pa.array([0.1, 0.1], type=pa.float64()),
+                "step_time_ms": pa.array([10.0, 10.0], type=pa.float64()),
+                "batch_index": pa.array([0, 1], type=pa.int64()),
+                "is_spike": pa.array([False, False], type=pa.bool_()),
+                "cpu_memory_mb": pa.array([0.0, 0.0], type=pa.float64()),
+                "cuda_memory_mb": pa.array([0.0, 0.0], type=pa.float64()),
+                "spike_score": pa.array([0.0, 0.0], type=pa.float64()),
+            },
+            schema=pa.schema(
+                [
+                    pa.field("step", pa.int64()),
+                    pa.field("loss", pa.float64()),
+                    pa.field("grad_norm_before_clip", pa.float64()),
+                    pa.field("grad_norm_after_clip", pa.float64()),
+                    pa.field("lr", pa.float64()),
+                    pa.field("optimizer_v_norm", pa.float64()),
+                    pa.field("step_time_ms", pa.float64()),
+                    pa.field("batch_index", pa.int64()),
+                    pa.field("is_spike", pa.bool_()),
+                    pa.field("cpu_memory_mb", pa.float64()),
+                    pa.field("cuda_memory_mb", pa.float64()),
+                    pa.field("spike_score", pa.float64()),
+                ]
+            ),
+        )
+        with pa.OSFile(str(run_path / "global.arrow"), "wb") as sink:
+            writer = ipc.new_file(sink, legacy.schema)
+            writer.write_batch(legacy)
+            writer.close()
+
+        config_resume = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run", resume=True)
+        writer2 = DiskWriter(run_path, config_resume)
+        assert writer2._all_global_rows[0]["step"] == 0
+        for i in range(2, 6):
+            writer2.append_global(make_global_snap(i))
+        writer2.flush()
+        writer2.close()
+
+        rows = read_arrow_rows_sync(run_path / "global.arrow")
+        assert [r["step"] for r in rows] == list(range(6))
+
+    def test_layer_append_and_compaction(self, tmp_path):
+        """Layer files follow the same append+compaction path and stay
+        readable at every flush."""
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path), run_name="test_run", compaction_every_n_steps=8
+        )
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+
+        for i in range(20):
+            writer.append_layer("layer0", make_layer_snap(i))
+            if i % 5 == 4:
+                writer.flush()
+                rows = read_arrow_rows_sync(run_path / "layers" / "layer0.arrow")
+                assert [r["step"] for r in rows] == list(range(i + 1))
+
+        writer.close()
+        rows = read_arrow_rows_sync(run_path / "layers" / "layer0.arrow")
+        assert [r["step"] for r in rows] == list(range(20))
+
+    def test_plugin_metrics_append_and_compaction(self, tmp_path):
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path), run_name="test_run", compaction_every_n_steps=10
+        )
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+
+        for i in range(12):
+            writer.append_plugin_metrics(i, "test_plugin", {"metric_a": float(i)})
+        writer.flush()
+        writer.close()
+
+        rows = read_arrow_rows_sync(run_path / "plugin_metrics.arrow")
+        assert len(rows) == 12
+        assert rows[0]["plugin"] == "test_plugin"
+        assert rows[0]["metric"] == "metric_a"
+        assert rows[-1]["value"] == 11.0

@@ -11,12 +11,12 @@ from typing import Annotated, Any, cast
 from urllib.parse import quote, unquote
 
 import anyio
-import pyarrow.ipc as ipc
 from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel, Field
 
+from trainscope.io.writer import read_arrow_rows_sync
 from trainscope.ui.auth import auth_enabled, auth_middleware_factory, verify_request
 
 logger = logging.getLogger("trainscope")
@@ -53,41 +53,20 @@ def _variance(values: list[float]) -> float:
 
 
 def _read_arrow_sync(path: Path) -> list[dict]:
-    """Read an Arrow IPC file into a list of row dicts.
+    """Read an Arrow file into a list of row dicts.
 
-    Closes the reader when the installed PyArrow version exposes ``close()``.
-    Gracefully handles in-flight writes when file footers are incomplete.
+    Handles both on-disk formats (legacy IPC files and the append-only IPC
+    streams written since 0.7.0) and gracefully handles in-flight writes when
+    a file tail is momentarily incomplete.
     """
     if not path.exists() or path.stat().st_size == 0:
         return []
     try:
-        reader = ipc.open_file(str(path))
-        try:
-            table = reader.read_all()
-        finally:
-            close = getattr(reader, "close", None)
-            if callable(close):
-                close()
+        return read_arrow_rows_sync(path)
     except Exception as exc:
-        # File is being concurrently replaced or has an incomplete footer.
+        # File is being concurrently replaced or has an incomplete tail.
         logger.debug("Transient error reading Arrow file %s: %s", path, exc)
         return []
-
-    raw = table.to_pydict()
-    if not raw:
-        return []
-    n = len(next(iter(raw.values())))
-    keys = list(raw.keys())
-    rows = []
-    for i in range(n):
-        row = {}
-        for k in keys:
-            val = raw[k][i]
-            if hasattr(val, "as_py"):
-                val = val.as_py()
-            row[k] = val
-        rows.append(row)
-    return rows
 
 
 async def _read_arrow(path: Path) -> list[dict]:
