@@ -9,9 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - PELT-triggered spikes no longer carry a clamped `|score| == threshold`: `ChangePointDetector` now returns the raw median/MAD-normalized deviation `(loss - median) / (1.4826 * MAD)` on the PELT path, preserving the true magnitude of the change point. CUSUM-triggered spikes (the default path) are unchanged and still satisfy `|score| >= threshold`. This is a behavior change for runs with the optional `ruptures` extra installed: subtle PELT-detected change points can now report scores below the threshold instead of a flat threshold value.
+- `DiskWriter` now writes global/layer/plugin-metrics streams in the Arrow IPC *stream* format with true appends: each flush persists only the new rows, and the full file is rewritten (compacted) only every `compaction_every_n_steps` steps (default 1000) instead of on every flush. This removes the O(n²) total write cost on long runs — e.g. a 100k-step run flushes in ~11s instead of tens of minutes — while the file stays readable by the UI server at every flush. Runs written by older versions (legacy IPC file format) remain readable, and resuming one rewrites it into the appendable format on the next flush. `RemoteWriter` is unchanged (remote objects like S3 keys cannot be appended to).
 
 ### Added
 - `TrainScope.step()` accepts an optional `grad_norm_after_clip=` parameter. Callers that clip gradients externally (TrainScope itself no longer clips) can record the real post-clip norm instead of a mirror of `grad_norm_before_clip`.
+- New `compaction_every_n_steps` config field (default 1000) controlling how often the append-only Arrow files are fully rewritten.
+
+### Fixed
+- Prometheus telemetry labelled requests with the concrete request path, so path-parameterized endpoints like `/api/layers/{layer_name}` created one time series per unique layer name (unbounded cardinality). The `path` label now uses the route template, e.g. `/api/layers/{layer_name}`.
 
 ## [0.5.1] - Display & Verification Fixes
 
