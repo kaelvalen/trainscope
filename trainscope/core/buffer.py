@@ -46,6 +46,22 @@ class RollingBuffer:
 
         self._full_resolution.append(entry)
 
+    @staticmethod
+    def _merged_values(combined: dict[int, dict], key) -> list[dict]:
+        """Return merged values in chronological order.
+
+        Fast path: both segments are step-sorted and disjoint (eviction moves
+        a step from full resolution to decimated history exactly once, so
+        decimated holds strictly older steps), making insertion order already
+        chronological — no sort needed. A future insertion path that violates
+        this invariant would otherwise silently return out-of-order rows, so
+        an O(n) order check falls back to an explicit sort on violation.
+        """
+        result = list(combined.values())
+        if any(key(a) > key(b) for a, b in zip(result, result[1:])):
+            result.sort(key=key)
+        return result
+
     def get_global_steps(self) -> list[dict]:
         # Both deques are step-sorted and disjoint (eviction moves a step from
         # full resolution to decimated history exactly once), so a linear
@@ -55,7 +71,7 @@ class RollingBuffer:
             combined[entry["global"]["step"]] = entry["global"]
         for entry in self._full_resolution:
             combined[entry["global"]["step"]] = entry["global"]
-        return list(combined.values())
+        return self._merged_values(combined, lambda s: s["step"])
 
     def get_layer_steps(self, layer_name: str) -> list[dict]:
         combined: dict[int, dict] = {}
@@ -67,7 +83,7 @@ class RollingBuffer:
             step = entry["global"]["step"]
             if step not in combined and layer_name in entry["layers"]:
                 combined[step] = entry["layers"][layer_name]
-        return list(combined.values())
+        return self._merged_values(combined, lambda s: s["step"])
 
     def get_window(self, center_step: int, before: int, after: int) -> list[dict]:
         lo, hi = center_step - before, center_step + after
@@ -80,4 +96,4 @@ class RollingBuffer:
             step = entry["global"]["step"]
             if lo <= step <= hi:
                 combined[step] = entry
-        return list(combined.values())
+        return self._merged_values(combined, lambda e: e["global"]["step"])
