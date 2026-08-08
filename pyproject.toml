@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "trainscope"
-version = "0.5.1"
+version = "0.6.0"
 description = "Post-mortem debugger for LLM training loss spikes"
 readme = "README.md"
 license = { text = "MIT" }
