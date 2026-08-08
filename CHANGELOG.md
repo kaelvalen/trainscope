@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- PELT-triggered spikes no longer carry a clamped `|score| == threshold`: `ChangePointDetector` now returns the raw median/MAD-normalized deviation `(loss - median) / (1.4826 * MAD)` on the PELT path, preserving the true magnitude of the change point. CUSUM-triggered spikes (the default path) are unchanged and still satisfy `|score| >= threshold`. This is a behavior change for runs with the optional `ruptures` extra installed: subtle PELT-detected change points can now report scores below the threshold instead of a flat threshold value.
+
+### Added
+- `TrainScope.step()` accepts an optional `grad_norm_after_clip=` parameter. Callers that clip gradients externally (TrainScope itself no longer clips) can record the real post-clip norm instead of a mirror of `grad_norm_before_clip`.
+
 ## [0.5.1] - Display & Verification Fixes
 
 ### Fixed
