@@ -14,18 +14,24 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.
 import { Activity, BarChart3, FolderOpen, Scale, Search } from 'lucide-react'
 
 function mean(arr) {
-  if (!arr.length) return 0
-  return arr.reduce((a, b) => a + b, 0) / arr.length
+  const vals = finiteValues(arr)
+  if (!vals.length) return NaN
+  return vals.reduce((a, b) => a + b, 0) / vals.length
 }
 
 function stddev(arr) {
-  if (arr.length < 2) return 0
-  const m = mean(arr)
-  return Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / arr.length)
+  const vals = finiteValues(arr)
+  if (vals.length < 2) return NaN
+  const m = mean(vals)
+  return Math.sqrt(vals.reduce((a, b) => a + (b - m) ** 2, 0) / vals.length)
+}
+
+function finiteValues(arr) {
+  return (arr || []).filter((v) => typeof v === 'number' && Number.isFinite(v))
 }
 
 function formatFloat(v) {
-  return typeof v === 'number' ? v.toFixed(4) : '—'
+  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(4) : '—'
 }
 
 export default function LayerDrilldown() {
@@ -74,12 +80,15 @@ export default function LayerDrilldown() {
   const kurtosisValues = useMemo(() => layerData.map((r) => r.act_kurtosis), [layerData])
 
   const stats = useMemo(() => {
-    const mkMetric = (values) => ({
-      mean: mean(values),
-      std: stddev(values),
-      max: values.length ? Math.max(...values) : 0,
-      min: values.length ? Math.min(...values) : 0,
-    })
+    const mkMetric = (values) => {
+      const vals = finiteValues(values)
+      return {
+        mean: mean(values),
+        std: stddev(values),
+        max: vals.length ? Math.max(...vals) : NaN,
+        min: vals.length ? Math.min(...vals) : NaN,
+      }
+    }
     return {
       grad: mkMetric(gradNorms),
       weight: mkMetric(weightNorms),
@@ -227,6 +236,9 @@ export default function LayerDrilldown() {
                   type: 'scatter',
                   mode: 'lines',
                   name: selectedMetric.name,
+                  // Activation metrics are only sampled every N steps; null
+                  // samples (not measured) render as gaps, not as zero.
+                  connectgaps: false,
                   line: { color: selectedMetric.color, width: 1.5 },
                 },
               ]}

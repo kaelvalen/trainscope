@@ -158,13 +158,15 @@ class RemoteWriter:
     # ------------------------------------------------------------------ #
     # Metadata
     # ------------------------------------------------------------------ #
-    def write_meta(self, model_name: str, model_config: dict):
+    def write_meta(self, model_name: str, model_config: dict, detector_info: dict | None = None):
         meta = {
             "model_name": model_name,
             "model_config": model_config,
             "trainscope_config": self._config.to_dict(),
             "start_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
+        if detector_info is not None:
+            meta["detector"] = detector_info
         with self._fs.open(self._meta_path(), "wb") as f:
             f.write(json.dumps(meta, indent=2).encode("utf-8"))
         logger.debug("Wrote meta.json to %s", self._uri)

@@ -108,9 +108,17 @@ class TrainScope:
         return "cpu"
 
     def attach(self) -> "TrainScope":
+        detector_cfg = self._config.detector
+        detector_name = (
+            detector_cfg["name"] if isinstance(detector_cfg, dict) else str(detector_cfg)
+        )
         self._writer.write_meta(
             model_name=self._model.__class__.__name__,
             model_config=self._config.to_dict(),
+            detector_info={
+                "name": detector_name,
+                "min_observations": getattr(self._detector, "min_observations", None),
+            },
         )
 
         for name, module in self._model.named_modules():
@@ -283,18 +291,12 @@ class TrainScope:
             else:
                 hist_counts, hist_edges = [], []
 
-            act_metrics = self._act_cache.get(
-                module_name,
-                {
-                    "act_mean": 0.0,
-                    "act_std": 0.0,
-                    "act_max_abs": 0.0,
-                    "act_kurtosis": 0.0,
-                    "act_min": 0.0,
-                    "act_max": 0.0,
-                    "act_median": 0.0,
-                },
-            )
+            # Activation metrics are only computed every
+            # activation_metrics_every_n_steps steps (see the forward hook in
+            # attach()). On the other steps the cache is empty; write None
+            # instead of a zero placeholder so "not measured" stays distinct
+            # from "measured and zero" in the UI.
+            act_metrics = self._act_cache.get(module_name) or {}
             grad_metrics = compute_gradient_metrics(param.grad, device=compute_dev)
 
             layer_name = name
@@ -302,10 +304,10 @@ class TrainScope:
                 "step": step_idx,
                 "grad_l2_norm": grad_metrics.get("grad_l2_norm", 0.0),
                 "weight_l2_norm": weight_metrics.get("weight_l2_norm", 0.0),
-                "act_mean": act_metrics.get("act_mean", 0.0),
-                "act_std": act_metrics.get("act_std", 0.0),
-                "act_max_abs": act_metrics.get("act_max_abs", 0.0),
-                "act_kurtosis": act_metrics.get("act_kurtosis", 0.0),
+                "act_mean": act_metrics.get("act_mean"),
+                "act_std": act_metrics.get("act_std"),
+                "act_max_abs": act_metrics.get("act_max_abs"),
+                "act_kurtosis": act_metrics.get("act_kurtosis"),
                 "grad_nan_inf_ratio": grad_metrics.get("grad_nan_inf_ratio", 0.0),
                 "hist_counts": hist_counts,
                 "hist_edges": hist_edges,
@@ -315,9 +317,9 @@ class TrainScope:
                 "weight_std": weight_metrics.get("weight_std", 0.0),
                 "weight_max_abs": weight_metrics.get("weight_max_abs", 0.0),
                 "weight_min": weight_metrics.get("weight_min", 0.0),
-                "act_min": act_metrics.get("act_min", 0.0),
-                "act_max": act_metrics.get("act_max", 0.0),
-                "act_median": act_metrics.get("act_median", 0.0),
+                "act_min": act_metrics.get("act_min"),
+                "act_max": act_metrics.get("act_max"),
+                "act_median": act_metrics.get("act_median"),
             }
             layer_snaps[layer_name] = layer_snap
 

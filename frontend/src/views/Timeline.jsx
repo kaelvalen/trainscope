@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useRun } from '../RunContext.jsx'
 import { fetchLayersRanked, fetchLayer } from '../api.js'
-import { scrubLineShape, truncateLayerName, CHART_COLORS } from '../theme.js'
+import { scrubLineShape, truncateLayerName, CHART_COLORS, warmupBandShape, warmupAnnotation } from '../theme.js'
 import { buildSpikeClusterShapes, buildSpikeClusterAnnotations } from '../utils/spikeCluster.js'
+import { computeWarmupBand } from '../utils/warmup.js'
 import Chart from '../components/Chart.jsx'
 import StepScrubber from '../components/StepScrubber.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
@@ -78,7 +79,7 @@ function AnomalyRail({ events, onSelect }) {
 }
 
 export default function Timeline() {
-  const { globalData, layerNames, spikeEvents } = useRun()
+  const { meta, globalData, layerNames, spikeEvents } = useRun()
   const [layerGradNorms, setLayerGradNorms] = useState({})
   const [scrubStep, setScrubStep] = useState(0)
   const [layerLoading, setLayerLoading] = useState(true)
@@ -131,6 +132,21 @@ export default function Timeline() {
 
   const spikeShapes = useMemo(() => buildSpikeClusterShapes(spikeEvents), [spikeEvents])
   const spikeAnnotations = useMemo(() => buildSpikeClusterAnnotations(spikeEvents), [spikeEvents])
+
+  // Detector warmup: until min_observations losses have been seen the detector
+  // cannot report spikes, so early explosions stay invisible. Shade that band.
+  const warmupBand = useMemo(() => computeWarmupBand(meta, globalData), [meta, globalData])
+  const warmupShapes = useMemo(
+    () => (warmupBand ? [warmupBandShape(warmupBand.startStep, warmupBand.endStep)] : []),
+    [warmupBand]
+  )
+  const warmupAnnotations = useMemo(
+    () =>
+      warmupBand
+        ? [warmupAnnotation(warmupBand.startStep, warmupBand.endStep)]
+        : [],
+    [warmupBand]
+  )
 
   const scrubShapes = useMemo(
     () => (scrubStep != null ? [scrubLineShape(scrubStep)] : []),
@@ -247,8 +263,8 @@ export default function Timeline() {
             ]}
             layout={buildZoomLayout({
               height: 320,
-              shapes: [...spikeShapes, ...scrubShapes],
-              annotations: spikeAnnotations,
+              shapes: [...warmupShapes, ...spikeShapes, ...scrubShapes],
+              annotations: [...warmupAnnotations, ...spikeAnnotations],
               uirevision: 'timeline-loss',
             })}
             config={{ scrollZoom: true }}
@@ -272,7 +288,7 @@ export default function Timeline() {
             ]}
             layout={buildZoomLayout({
               height: 280,
-              shapes: [...spikeShapes, ...scrubShapes],
+              shapes: [...warmupShapes, ...spikeShapes, ...scrubShapes],
               uirevision: 'timeline-grad',
             })}
             config={{ scrollZoom: true }}
@@ -317,7 +333,7 @@ export default function Timeline() {
               height: 340,
               showlegend: true,
               legend: { font: { size: 10 } },
-              shapes: scrubShapes,
+              shapes: [...warmupShapes, ...scrubShapes],
               uirevision: 'timeline-layers',
             })}
             config={{ scrollZoom: true }}
