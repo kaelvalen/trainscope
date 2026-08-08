@@ -67,9 +67,14 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
         try:
+            # Label with the route template (e.g. /api/layers/{layer_name})
+            # instead of the concrete path, so path-parameterized endpoints
+            # don't create one time series per unique parameter value.
+            route = request.scope.get("route")
+            path = getattr(route, "path", None) or request.url.path
             self._telemetry.requests_total.labels(
                 method=request.method,
-                path=request.url.path,
+                path=path,
                 status_code=str(response.status_code),
             ).inc()
         except Exception:

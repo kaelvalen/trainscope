@@ -2,12 +2,12 @@ import json
 import math
 import warnings
 
-import pyarrow.ipc as ipc
 import pytest
 import torch
 import torch.nn as nn
 
 from trainscope import TrainScope, TrainScopeConfig
+from trainscope.io.writer import read_arrow_rows_sync
 
 
 def _grad_l2_norm(model: nn.Module) -> float:
@@ -155,11 +155,9 @@ def test_unmeasured_activation_metrics_are_null_not_zero(tmp_path):
     scope.detach()
 
     layer_path = next((tmp_path / "scope_act_nulls" / "layers").glob("*.arrow"))
-    reader = ipc.open_file(str(layer_path))
-    table = reader.read_all()
-    d = table.to_pydict()
-    steps = d["step"]
-    kurtosis = d["act_kurtosis"]
+    layer_rows = read_arrow_rows_sync(layer_path)
+    steps = [r["step"] for r in layer_rows]
+    kurtosis = [r["act_kurtosis"] for r in layer_rows]
 
     # Steps 0 and 5 are multiples of 5: measured (a real float).
     for row_idx, step in enumerate(steps):
@@ -186,11 +184,9 @@ def test_step_records_custom_grad_norm_after_clip(tmp_path):
     scope.step(loss.item(), grad_norm_after_clip=0.123, batch_index=0)
     scope.detach()
 
-    reader = ipc.open_file(str(tmp_path / "scope_after_clip" / "global.arrow"))
-    table = reader.read_all()
-    d = table.to_pydict()
-    assert d["grad_norm_after_clip"][0] == pytest.approx(0.123)
-    assert d["grad_norm_before_clip"][0] != pytest.approx(0.123)
+    rows = read_arrow_rows_sync(tmp_path / "scope_after_clip" / "global.arrow")
+    assert rows[0]["grad_norm_after_clip"] == pytest.approx(0.123)
+    assert rows[0]["grad_norm_before_clip"] != pytest.approx(0.123)
 
 
 def test_step_records_realistic_external_clip_flow(tmp_path):
@@ -215,11 +211,9 @@ def test_step_records_realistic_external_clip_flow(tmp_path):
     scope.step(1.0, grad_norm_after_clip=post_clip_norm, batch_index=0)
     scope.detach()
 
-    reader = ipc.open_file(str(tmp_path / "scope_real_clip" / "global.arrow"))
-    table = reader.read_all()
-    d = table.to_pydict()
-    assert d["grad_norm_after_clip"][0] == pytest.approx(post_clip_norm)
-    assert d["grad_norm_before_clip"][0] == pytest.approx(post_clip_norm)
+    rows = read_arrow_rows_sync(tmp_path / "scope_real_clip" / "global.arrow")
+    assert rows[0]["grad_norm_after_clip"] == pytest.approx(post_clip_norm)
+    assert rows[0]["grad_norm_before_clip"] == pytest.approx(post_clip_norm)
     assert post_clip_norm == pytest.approx(0.1, abs=1e-6)
 
 
@@ -243,9 +237,7 @@ def test_step_defaults_grad_norm_after_clip_to_before_when_omitted(tmp_path):
     scope.step(loss.item(), batch_index=0)
     scope.detach()
 
-    reader = ipc.open_file(str(tmp_path / "scope_default_after_clip" / "global.arrow"))
-    table = reader.read_all()
-    d = table.to_pydict()
-    assert d["grad_norm_after_clip"][0] == pytest.approx(measured_norm)
-    assert d["grad_norm_before_clip"][0] == pytest.approx(measured_norm)
-    assert d["grad_norm_after_clip"][0] == d["grad_norm_before_clip"][0]
+    rows = read_arrow_rows_sync(tmp_path / "scope_default_after_clip" / "global.arrow")
+    assert rows[0]["grad_norm_after_clip"] == pytest.approx(measured_norm)
+    assert rows[0]["grad_norm_before_clip"] == pytest.approx(measured_norm)
+    assert rows[0]["grad_norm_after_clip"] == rows[0]["grad_norm_before_clip"]
