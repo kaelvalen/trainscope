@@ -13,7 +13,7 @@ try:
     __version__ = _get_version("trainscope")
 except PackageNotFoundError:  # pragma: no cover
     # Fallback when running from source without package metadata.
-    __version__ = "0.5.1"
+    __version__ = "0.7.1"
 
 
 def _parse_skip_batches(value: str) -> list[int]:
