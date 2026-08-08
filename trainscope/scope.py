@@ -213,6 +213,7 @@ class TrainScope:
         *,
         batch_index: int | None = None,
         clip_grad_norm: float | None = None,
+        grad_norm_after_clip: float | None = None,
     ) -> dict | None:
         step_idx = self._step_idx
         self._step_idx += 1
@@ -241,12 +242,12 @@ class TrainScope:
             logger.warning("Non-finite loss recorded at step %d: %s", step_idx, loss_f)
 
         # clip_grad_norm is deprecated (see the warning above) and TrainScope
-        # no longer clips gradients itself, so there is no separate
-        # post-clip reading to take: grad_norm_after_clip always mirrors
-        # grad_norm_before_clip. If the caller clips externally *before*
-        # calling step(), both fields report the already-clipped norm.
+        # no longer clips gradients itself. Callers that clip externally and
+        # want an honest before/after pair can pass the real post-clip norm
+        # via grad_norm_after_clip; it is then recorded instead of mirroring
+        # the pre-clip reading.
         grad_norm_before = self._compute_global_grad_norm()
-        grad_norm_after = grad_norm_before
+        grad_norm_after = grad_norm_before if grad_norm_after_clip is None else grad_norm_after_clip
 
         optimizer_v_norm = self._compute_optimizer_v_norm()
         lr = self._get_lr()

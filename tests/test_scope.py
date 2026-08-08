@@ -3,6 +3,7 @@ import math
 import warnings
 
 import pyarrow.ipc as ipc
+import pytest
 import torch
 import torch.nn as nn
 
@@ -149,3 +150,27 @@ def test_unmeasured_activation_metrics_are_null_not_zero(tmp_path):
             assert isinstance(kurtosis[row_idx], float)
         else:
             assert kurtosis[row_idx] is None
+
+
+def test_step_records_custom_grad_norm_after_clip(tmp_path):
+    """Callers that clip externally can pass the real post-clip norm via
+    grad_norm_after_clip; it must be recorded instead of mirroring the
+    pre-clip reading."""
+    model = nn.Linear(4, 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.01)
+    cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name="scope_after_clip")
+    scope = TrainScope(model, opt, cfg).attach()
+
+    x = torch.randn(2, 4)
+    y = torch.randn(2, 1)
+    opt.zero_grad()
+    loss = nn.functional.mse_loss(model(x), y)
+    loss.backward()
+    scope.step(loss.item(), grad_norm_after_clip=0.123, batch_index=0)
+    scope.detach()
+
+    reader = ipc.open_file(str(tmp_path / "scope_after_clip" / "global.arrow"))
+    table = reader.read_all()
+    d = table.to_pydict()
+    assert d["grad_norm_after_clip"][0] == pytest.approx(0.123)
+    assert d["grad_norm_before_clip"][0] != pytest.approx(0.123)
