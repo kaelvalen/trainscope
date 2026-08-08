@@ -372,3 +372,45 @@ def test_websocket_allowed_with_api_key(run_dir, monkeypatch):
 
     with client.websocket_connect("/ws", headers={"Authorization": "Bearer secret-key"}) as ws:
         assert ws.receive_json()["type"] == "meta"
+
+
+def test_server_reads_stream_format_run(tmp_path):
+    """A run written by the append-only DiskWriter (IPC stream format) must be
+    served by the same API as a legacy run."""
+    from trainscope.core.config import TrainScopeConfig
+    from trainscope.io.writer import DiskWriter
+
+    run = tmp_path / "stream_run"
+    config = TrainScopeConfig(
+        run_dir=str(tmp_path), run_name="stream_run", compaction_every_n_steps=6
+    )
+    writer = DiskWriter(run, config)
+    for i in range(10):
+        writer.append_global(
+            {
+                "step": i,
+                "loss": float(i),
+                "grad_norm_before_clip": 0.5,
+                "grad_norm_after_clip": 0.5,
+                "lr": 0.001,
+                "optimizer_v_norm": 0.0,
+                "step_time_ms": 1.0,
+                "batch_index": i,
+                "is_spike": False,
+                "cpu_memory_mb": 0.0,
+                "cuda_memory_mb": 0.0,
+                "spike_score": 0.0,
+            }
+        )
+    writer.append_layer("layer0", {"step": 0, "grad_l2_norm": 0.1})
+    writer.close()
+
+    client = TestClient(create_app(str(run)))
+    global_rows = client.get("/api/global").json()
+    assert len(global_rows) == 10
+    assert [r["step"] for r in global_rows] == list(range(10))
+    assert client.get("/api/layers").json() == ["layer0"]
+    layer_rows = client.get("/api/layers/layer0").json()
+    assert layer_rows[0]["step"] == 0
+    assert layer_rows[0]["grad_l2_norm"] == 0.1
+    assert layer_rows[0]["act_kurtosis"] is None

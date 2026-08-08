@@ -65,6 +65,7 @@ def _coerce_value(field_name: str, raw: str) -> Any:
         "trace_every_n_steps",
         "rank",
         "rng_every_n_steps",
+        "compaction_every_n_steps",
     }
     if field_name in int_fields:
         return int(raw)
@@ -107,6 +108,11 @@ class TrainScopeConfig:
     # DDP rank: when set, appends _rank{rank} to the run directory to avoid
     # file collisions when each process creates its own TrainScope.
     rank: int | None = None
+    # Arrow files are written append-only (cheap per-flush writes); every
+    # `compaction_every_n_steps` steps the whole file is rewritten from
+    # memory to keep the file layout compact. Larger values reduce write
+    # amplification at the cost of a sparser on-disk layout.
+    compaction_every_n_steps: int = 1000
 
     # Device used for metric computation. None means "same device as the model
     # tensor being inspected"; explicit values force offloading to that device.
@@ -163,6 +169,8 @@ class TrainScopeConfig:
             raise ValueError("activation_metrics_every_n_steps must be >= 1")
         if self.trace_every_n_steps < 1:
             raise ValueError("trace_every_n_steps must be >= 1")
+        if self.compaction_every_n_steps < 1:
+            raise ValueError("compaction_every_n_steps must be >= 1")
         if self.n_histogram_bins < 2:
             raise ValueError("n_histogram_bins must be >= 2")
         if self.rng_every_n_steps < 0:
@@ -218,6 +226,7 @@ class TrainScopeConfig:
             "stop_on_spike": self.stop_on_spike,
             "trace_every_n_steps": self.trace_every_n_steps,
             "rank": self.rank,
+            "compaction_every_n_steps": self.compaction_every_n_steps,
             "device": str(self.device) if self.device is not None else None,
             "track_memory": self.track_memory,
             "checkpoint_on_spike": self.checkpoint_on_spike,

@@ -5,7 +5,7 @@ import pickle
 import time
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 import pyarrow as pa
@@ -148,18 +148,103 @@ def _make_plugin_metrics_batch(rows: list[dict]) -> pa.RecordBatch:
     )
 
 
+def _table_to_rows(table: pa.Table) -> list[dict]:
+    pydict = table.to_pydict()
+    if not pydict:
+        return []
+    keys = list(pydict.keys())
+    n = len(next(iter(pydict.values())))
+    rows = []
+    for i in range(n):
+        row = {}
+        for k in keys:
+            val = pydict[k][i]
+            if hasattr(val, "as_py"):
+                val = val.as_py()
+            row[k] = val
+        rows.append(row)
+    return rows
+
+
+def _read_ipc_file_rows(path: Path) -> list[dict]:
+    """Read rows from a legacy IPC *file* (schema + batches + footer)."""
+    reader = ipc.open_file(str(path))
+    try:
+        table = reader.read_all()
+    finally:
+        close = getattr(reader, "close", None)
+        if callable(close):
+            close()
+    return _table_to_rows(table)
+
+
+def _read_ipc_stream_rows(path: Path) -> list[dict]:
+    """Read rows from an IPC *stream* file, tolerating a truncated tail.
+
+    The DiskWriter appends batches to live stream files; a crash can leave the
+    file without its end-of-stream marker (still readable) or cut a message in
+    half (the incomplete tail must be dropped, not fail the whole read).
+    """
+    try:
+        reader = ipc.open_stream(str(path))
+    except Exception:
+        return []
+    batches = []
+    try:
+        while True:
+            try:
+                batch = reader.read_next_batch()
+            except Exception:
+                # Truncated mid-message: keep everything parsed so far.
+                break
+            if batch is None:
+                break
+            batches.append(batch)
+    finally:
+        close = getattr(reader, "close", None)
+        if callable(close):
+            close()
+    if not batches:
+        return []
+    return _table_to_rows(pa.Table.from_batches(batches))
+
+
+def read_arrow_rows_sync(path: Path) -> list[dict]:
+    """Read rows from an Arrow file written in either on-disk format.
+
+    Runs written before the append-only writer land as legacy IPC *files*
+    (``ipc.open_file``); runs written by the append-only writer use the IPC
+    *stream* format. Both are readable; ``path`` may also be a concurrently
+    written file whose tail is momentarily incomplete.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return []
+    try:
+        return _read_ipc_file_rows(path)
+    except Exception:
+        return _read_ipc_stream_rows(path)
+
+
 class DiskWriter:
     """Persists training snapshots to Arrow, JSON, checkpoint, and RNG-state files.
 
-    Because PyArrow IPC files do not support true append and only become
-    readable once a footer is written, each flush atomically rewrites the
-    global/layer/plugin-metrics Arrow files from their full in-memory row
-    lists. This keeps files valid and readable by the UI server throughout a
-    live run, not just after close().
+    Global/layer/plugin-metrics streams are written in the Arrow IPC *stream*
+    format with true appends: each flush writes only the new rows and flushes
+    the sink, so the on-disk file stays readable by the UI server throughout a
+    live run (IPC streams need no footer, unlike IPC files). Every
+    ``config.compaction_every_n_steps`` steps the file is atomically rewritten
+    from the full in-memory row list to keep the layout compact; without this,
+    rewriting the whole history on every flush would cost O(n^2) total row
+    writes on long runs.
+
+    A crash mid-write can leave a truncated tail; readers (``read_arrow_rows_sync``)
+    drop the incomplete tail instead of failing the whole read, and the missing
+    end-of-stream marker is tolerated.
 
     Supports resuming an existing run: when ``config.resume`` is True and Arrow
-    files already exist, existing rows are read at initialization and merged
-    with new rows on the first flush.
+    files already exist, existing rows (legacy IPC file or stream format) are
+    read at initialization and merged with new rows; the next flush compacts
+    the file into the stream format.
     """
 
     def __init__(
@@ -178,6 +263,12 @@ class DiskWriter:
         (self._run_path / "rng_states").mkdir(exist_ok=True)
         (self._run_path / "checkpoints").mkdir(exist_ok=True)
 
+        # Clean up temp files left behind by a crash mid-compaction.
+        for stale in self._run_path.glob("*.arrow.tmp"):
+            stale.unlink(missing_ok=True)
+        for stale in (self._run_path / "layers").glob("*.arrow.tmp"):
+            stale.unlink(missing_ok=True)
+
         if model_name is not None:
             self.write_meta(model_name, model_config or {})
 
@@ -187,14 +278,8 @@ class DiskWriter:
 
         self._closed = False
 
-        # Every flush rewrites each Arrow file from this in-memory row list (see
-        # _flush_global/_flush_layer/_flush_plugin_metrics). PyArrow's IPC file
-        # format only becomes readable once a footer is written at close(), so a
-        # long-lived open writer would leave the file unreadable to the UI server
-        # for the entire duration of a live run. Rewriting atomically on every
-        # flush keeps the on-disk file always valid, at the cost of O(rows) work
-        # per flush. Also holds rows reloaded when resuming an existing run.
-        self._resume = False
+        # Full in-memory row lists drive compactions (full rewrite every
+        # compaction_every_n_steps rows) and hold rows reloaded on resume.
         self._all_global_rows: list[dict] = []
         self._all_layer_rows: dict[str, list[dict]] = {}
         self._all_plugin_metrics_rows: list[dict] = []
@@ -204,6 +289,22 @@ class DiskWriter:
         self._last_step: int | None = None
         # Set of layer names for which a layer Arrow file exists or will exist.
         self._layer_files: set[str] = set()
+
+        # Open IPC stream writers (sink, writer) per on-disk stream. Kept open
+        # for the lifetime of the writer; closed on close() and reopened after
+        # each compaction.
+        self._global_stream: tuple[pa.OSFile, Any] | None = None
+        self._layer_streams: dict[str, tuple[pa.OSFile, Any]] = {}
+        self._plugin_stream: tuple[pa.OSFile, Any] | None = None
+        # Rows appended to the on-disk stream since the last compaction.
+        self._global_rows_since_compaction = 0
+        self._layer_rows_since_compaction: dict[str, int] = {}
+        self._plugin_rows_since_compaction = 0
+        # Set when resume loads rows from a pre-existing file: those files are
+        # in the legacy IPC file format and cannot be appended to, so the next
+        # flush compacts them into the stream format.
+        self._needs_compaction: set[str] = set()
+
         if self._config.resume:
             self._load_resume_state()
 
@@ -243,17 +344,14 @@ class DiskWriter:
         global_path = self._global_path()
         if global_path.exists():
             try:
-                with ipc.open_file(str(global_path)) as reader:
-                    table = reader.read_all()
-                pydict = table.to_pydict()
-                # to_pydict returns columns; convert to row dicts.
-                self._all_global_rows = [
-                    dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())
-                ]
+                self._all_global_rows = read_arrow_rows_sync(global_path)
                 self._n_global_rows = len(self._all_global_rows)
                 if self._all_global_rows:
                     self._last_step = self._all_global_rows[-1].get("step")
-                self._resume = True
+                # The existing file cannot be appended to (legacy IPC file
+                # format, or a stream whose segments can't be merged): the
+                # next flush compacts it into a fresh stream file.
+                self._needs_compaction.add("global")
             except Exception:
                 logger.exception("Failed to resume global.arrow, falling back to overwrite")
                 self._all_global_rows = []
@@ -263,26 +361,18 @@ class DiskWriter:
             for path in layers_dir.glob("*.arrow"):
                 layer_name = self._decode_layer_name(path.name)
                 try:
-                    reader = ipc.open_file(str(path))
-                    table = reader.read_all()
-                    pydict = table.to_pydict()
-                    rows = [dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())]
+                    rows = read_arrow_rows_sync(path)
                     self._all_layer_rows[layer_name] = rows
                     self._layer_files.add(layer_name)
-                    self._resume = True
+                    self._needs_compaction.add(f"layer:{layer_name}")
                 except Exception:
                     logger.exception("Failed to resume layer file %s", path)
 
         plugin_metrics_path = self._plugin_metrics_path()
         if plugin_metrics_path.exists():
             try:
-                with ipc.open_file(str(plugin_metrics_path)) as reader:
-                    table = reader.read_all()
-                pydict = table.to_pydict()
-                self._all_plugin_metrics_rows = [
-                    dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())
-                ]
-                self._resume = True
+                self._all_plugin_metrics_rows = read_arrow_rows_sync(plugin_metrics_path)
+                self._needs_compaction.add("plugin")
             except Exception:
                 logger.exception("Failed to resume plugin_metrics.arrow")
 
@@ -363,64 +453,138 @@ class DiskWriter:
             self._flush_plugin_metrics()
 
     # --------------------------------------------------------------------- #
-    # Flush logic
+    # Flush logic: append-only, with periodic full compaction
     # --------------------------------------------------------------------- #
+    @staticmethod
+    def _open_stream(path: Path, schema: pa.Schema) -> tuple[pa.OSFile, Any]:
+        sink = pa.OSFile(str(path), "wb")
+        writer = ipc.new_stream(sink, schema)
+        return sink, writer
+
+    @staticmethod
+    def _close_stream(stream: tuple[pa.OSFile, Any] | None) -> None:
+        if stream is None:
+            return
+        sink, writer = stream
+        try:
+            writer.close()  # writes the end-of-stream marker
+        finally:
+            sink.close()
+
+    @staticmethod
+    def _reopen_compacted_stream(
+        path: Path,
+        schema: pa.Schema,
+        rows: list[dict],
+        make_batch: Callable[[list[dict]], pa.RecordBatch],
+    ) -> tuple[pa.OSFile, Any]:
+        """Atomically replace ``path`` with an IPC stream containing ``rows``.
+
+        The returned open (sink, writer) keeps appending to the newly swapped
+        file: it holds the only reference to the temp-file inode, which is
+        renamed over ``path`` while still open. A crash before the rename
+        leaves the old file untouched.
+        """
+        tmp_path = path.with_suffix(".arrow.tmp")
+        tmp_path.unlink(missing_ok=True)
+        sink = pa.OSFile(str(tmp_path), "wb")
+        writer = ipc.new_stream(sink, schema)
+        writer.write_batch(make_batch(rows))
+        sink.flush()
+        os.replace(str(tmp_path), str(path))
+        return sink, writer
+
     def _flush_global(self):
         if not self._global_buffer:
             return
 
-        rows = self._all_global_rows + self._global_buffer
-        self._atomic_rewrite_global(rows)
-        self._all_global_rows = rows
+        rows = self._global_buffer
         self._global_buffer = []
-        self._n_global_rows = len(rows)
+        self._all_global_rows = self._all_global_rows + rows
+        self._n_global_rows = len(self._all_global_rows)
+
+        self._global_rows_since_compaction += len(rows)
+        if (
+            "global" in self._needs_compaction
+            or self._global_rows_since_compaction >= self._config.compaction_every_n_steps
+        ):
+            self._needs_compaction.discard("global")
+            self._close_stream(self._global_stream)
+            self._global_stream = self._reopen_compacted_stream(
+                self._global_path(), GLOBAL_SCHEMA, self._all_global_rows, _make_global_batch
+            )
+            self._global_rows_since_compaction = 0
+            return
+
+        if self._global_stream is None:
+            self._global_stream = self._open_stream(self._global_path(), GLOBAL_SCHEMA)
+        sink, writer = self._global_stream
+        writer.write_batch(_make_global_batch(rows))
+        sink.flush()
 
     def _flush_layer(self, layer_name: str):
         rows = self._layer_buffers.get(layer_name, [])
         if not rows:
             return
-
-        combined = self._all_layer_rows.get(layer_name, []) + rows
-        self._atomic_rewrite_layer(layer_name, combined)
-        self._all_layer_rows[layer_name] = combined
         del self._layer_buffers[layer_name]
+
+        self._all_layer_rows[layer_name] = self._all_layer_rows.get(layer_name, []) + rows
+        self._layer_files.add(layer_name)
+
+        key = f"layer:{layer_name}"
+        n_since = self._layer_rows_since_compaction.get(layer_name, 0) + len(rows)
+        self._layer_rows_since_compaction[layer_name] = n_since
+        if key in self._needs_compaction or n_since >= self._config.compaction_every_n_steps:
+            self._needs_compaction.discard(key)
+            self._close_stream(self._layer_streams.pop(layer_name, None))
+            self._layer_streams[layer_name] = self._reopen_compacted_stream(
+                self._layer_path(layer_name),
+                LAYER_SCHEMA,
+                self._all_layer_rows[layer_name],
+                _make_layer_batch,
+            )
+            self._layer_rows_since_compaction[layer_name] = 0
+            return
+
+        stream = self._layer_streams.get(layer_name)
+        if stream is None:
+            stream = self._open_stream(self._layer_path(layer_name), LAYER_SCHEMA)
+            self._layer_streams[layer_name] = stream
+        sink, writer = stream
+        writer.write_batch(_make_layer_batch(rows))
+        sink.flush()
 
     def _flush_plugin_metrics(self):
         if not self._plugin_metrics_buffer:
             return
 
-        rows = self._all_plugin_metrics_rows + self._plugin_metrics_buffer
-        self._atomic_rewrite_plugin_metrics(rows)
-        self._all_plugin_metrics_rows = rows
+        rows = self._plugin_metrics_buffer
         self._plugin_metrics_buffer = []
+        self._all_plugin_metrics_rows = self._all_plugin_metrics_rows + rows
 
-    def _atomic_rewrite_global(self, rows: list[dict]):
-        path = self._global_path()
-        tmp_path = path.with_suffix(".arrow.tmp")
-        with pa.OSFile(str(tmp_path), "wb") as sink:
-            writer = ipc.new_file(sink, GLOBAL_SCHEMA)
-            writer.write_batch(_make_global_batch(rows))
-            writer.close()
-        os.replace(str(tmp_path), str(path))
+        self._plugin_rows_since_compaction += len(rows)
+        if (
+            "plugin" in self._needs_compaction
+            or self._plugin_rows_since_compaction >= self._config.compaction_every_n_steps
+        ):
+            self._needs_compaction.discard("plugin")
+            self._close_stream(self._plugin_stream)
+            self._plugin_stream = self._reopen_compacted_stream(
+                self._plugin_metrics_path(),
+                PLUGIN_METRICS_SCHEMA,
+                self._all_plugin_metrics_rows,
+                _make_plugin_metrics_batch,
+            )
+            self._plugin_rows_since_compaction = 0
+            return
 
-    def _atomic_rewrite_layer(self, layer_name: str, rows: list[dict]):
-        path = self._layer_path(layer_name)
-        tmp_path = path.with_suffix(".arrow.tmp")
-        with pa.OSFile(str(tmp_path), "wb") as sink:
-            writer = ipc.new_file(sink, LAYER_SCHEMA)
-            writer.write_batch(_make_layer_batch(rows))
-            writer.close()
-        os.replace(str(tmp_path), str(path))
-        self._layer_files.add(layer_name)
-
-    def _atomic_rewrite_plugin_metrics(self, rows: list[dict]):
-        path = self._plugin_metrics_path()
-        tmp_path = path.with_suffix(".arrow.tmp")
-        with pa.OSFile(str(tmp_path), "wb") as sink:
-            writer = ipc.new_file(sink, PLUGIN_METRICS_SCHEMA)
-            writer.write_batch(_make_plugin_metrics_batch(rows))
-            writer.close()
-        os.replace(str(tmp_path), str(path))
+        if self._plugin_stream is None:
+            self._plugin_stream = self._open_stream(
+                self._plugin_metrics_path(), PLUGIN_METRICS_SCHEMA
+            )
+        sink, writer = self._plugin_stream
+        writer.write_batch(_make_plugin_metrics_batch(rows))
+        sink.flush()
 
     # --------------------------------------------------------------------- #
     # Batch builders
@@ -520,4 +684,13 @@ class DiskWriter:
         try:
             self.flush()
         finally:
+            # Closing each stream writer writes the end-of-stream marker so
+            # the final files are fully terminated.
+            self._close_stream(self._global_stream)
+            self._global_stream = None
+            for stream in self._layer_streams.values():
+                self._close_stream(stream)
+            self._layer_streams = {}
+            self._close_stream(self._plugin_stream)
+            self._plugin_stream = None
             self._closed = True
