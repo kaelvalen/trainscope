@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.1] - Display & Verification Fixes
+
+### Fixed
+- Unmeasured activation metrics (`act_mean`, `act_std`, `act_kurtosis`, etc.) were persisted as `0.0` placeholders on steps between `activation_metrics_every_n_steps` samples, so the UI could not distinguish "measured and zero" from "not measured" — producing misleading sawtooth charts. These fields now persist as `null`, and the UI renders them as gaps instead of a flat zero line.
+- The detector's warmup window (`min_observations`, default 30) was invisible in the UI: during warmup the detector produces no scores, but the timeline showed an ordinary "no spikes" chart. The detector name and `min_observations` are now recorded in `meta.json` and the Timeline shades the warmup region with a "detector warming up — spikes not yet reported" band.
 
 ## [0.5.0] - Release Pipeline Hardening & Python 3.14 Support
 
