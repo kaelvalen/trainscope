@@ -10,6 +10,23 @@ import torch.nn as nn
 from trainscope import TrainScope, TrainScopeConfig
 
 
+def _grad_l2_norm(model: nn.Module) -> float:
+    """Total L2 norm of all non-None parameter gradients of ``model``."""
+    with torch.no_grad():
+        return float(
+            torch.sqrt(
+                sum(
+                    (
+                        p.grad.detach().pow(2).sum()
+                        for p in model.parameters()
+                        if p.grad is not None
+                    ),
+                    torch.zeros(()),
+                )
+            ).item()
+        )
+
+
 def test_attach_writes_meta(tmp_path):
     model = nn.Linear(4, 1)
     opt = torch.optim.SGD(model.parameters(), lr=0.01)
@@ -186,22 +203,16 @@ def test_step_records_realistic_external_clip_flow(tmp_path):
     cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name="scope_real_clip")
     scope = TrainScope(model, opt, cfg).attach()
 
-    x = torch.randn(2, 4)
-    y = torch.randn(2, 1)
-    opt.zero_grad()
-    loss = nn.functional.mse_loss(model(x), y)
-    loss.backward()
+    # Deterministic gradients with norm sqrt(5) ≈ 2.24 > max_norm so the
+    # clip always fires and the post-clip norm lands exactly on max_norm.
+    model.weight.grad = torch.ones_like(model.weight)
+    model.bias.grad = torch.ones_like(model.bias)
+    assert _grad_l2_norm(model) > 0.1
 
     torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
-    with torch.no_grad():
-        post_clip_norm = torch.sqrt(
-            sum(
-                (p.grad.detach().pow(2).sum() for p in model.parameters() if p.grad is not None),
-                torch.zeros(()),
-            )
-        ).item()
+    post_clip_norm = _grad_l2_norm(model)
 
-    scope.step(loss.item(), grad_norm_after_clip=post_clip_norm, batch_index=0)
+    scope.step(1.0, grad_norm_after_clip=post_clip_norm, batch_index=0)
     scope.detach()
 
     reader = ipc.open_file(str(tmp_path / "scope_real_clip" / "global.arrow"))
@@ -209,7 +220,7 @@ def test_step_records_realistic_external_clip_flow(tmp_path):
     d = table.to_pydict()
     assert d["grad_norm_after_clip"][0] == pytest.approx(post_clip_norm)
     assert d["grad_norm_before_clip"][0] == pytest.approx(post_clip_norm)
-    assert post_clip_norm <= 0.1 + 1e-6
+    assert post_clip_norm == pytest.approx(0.1, abs=1e-6)
 
 
 def test_step_defaults_grad_norm_after_clip_to_before_when_omitted(tmp_path):
@@ -227,13 +238,7 @@ def test_step_defaults_grad_norm_after_clip_to_before_when_omitted(tmp_path):
     loss = nn.functional.mse_loss(model(x), y)
     loss.backward()
 
-    with torch.no_grad():
-        measured_norm = torch.sqrt(
-            sum(
-                (p.grad.detach().pow(2).sum() for p in model.parameters() if p.grad is not None),
-                torch.zeros(()),
-            )
-        ).item()
+    measured_norm = _grad_l2_norm(model)
 
     scope.step(loss.item(), batch_index=0)
     scope.detach()
