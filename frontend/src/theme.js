@@ -6,18 +6,18 @@
  */
 
 export const COLORS = {
-  bg: '#0d111a',
-  panel: '#131a26',
-  border: '#293241',
+  bg: '#080A0C',
+  panel: '#0F1115',
+  border: '#23272F',
   text: '#e8edf5',
-  muted: '#8290a5',
-  accent: '#56d5e8',
-  success: '#63d8a2',
-  warning: '#f6bb67',
-  danger: '#fb7d87',
-  dangerBg: '#4a232b',
-  purple: '#b99af7',
-  button: '#0f7180',
+  muted: '#7E8795',
+  accent: '#4BDDC0',
+  success: '#47C28B',
+  warning: '#F7AC3B',
+  danger: '#F4525D',
+  dangerBg: '#471518',
+  purple: '#A07CDE',
+  button: '#1D7C69',
 }
 
 /**
@@ -46,17 +46,33 @@ export const SPACING = {
 export const DARK_LAYOUT = {
   paper_bgcolor: COLORS.panel,
   plot_bgcolor: COLORS.bg,
-  font: { color: COLORS.text, size: 11, family: 'system-ui, sans-serif' },
+  font: { color: COLORS.text, size: 11, family: "'JetBrains Mono', ui-monospace, monospace" },
   margin: { l: 58, r: 24, t: 24, b: 42 },
   colorway: [COLORS.accent, COLORS.success, COLORS.purple, COLORS.warning, COLORS.danger],
   xaxis: { gridcolor: COLORS.border, zerolinecolor: COLORS.border },
   yaxis: { gridcolor: COLORS.border, zerolinecolor: COLORS.border },
   hovermode: 'x unified',
-  hoverlabel: { bgcolor: COLORS.panel, bordercolor: COLORS.border, font: { color: COLORS.text } },
+  dragmode: 'zoom',
+  hoverlabel: {
+    bgcolor: COLORS.panel,
+    bordercolor: COLORS.border,
+    font: { color: COLORS.text, family: "'JetBrains Mono', ui-monospace, monospace" },
+  },
 }
 
 export const PLOT_CONFIG = {
-  displayModeBar: false,
+  displayModeBar: true,
+  scrollZoom: true,
+  // Strip Plotly's noisy default toolbar down to zoom/pan/reset — a 2-axis
+  // time series doesn't need lasso/select/spikelines/hover-toggle controls.
+  modeBarButtonsToRemove: [
+    'lasso2d',
+    'select2d',
+    'autoScale2d',
+    'toggleSpikelines',
+    'hoverClosestCartesian',
+    'hoverCompareCartesian',
+  ],
   displaylogo: false,
   responsive: true,
 }
@@ -70,7 +86,7 @@ export const STYLES = {
   panel: {
     background: COLORS.panel,
     border: `1px solid ${COLORS.border}`,
-    borderRadius: '12px',
+    borderRadius: '4px',
     padding: SPACING.md,
   },
   input: {
@@ -78,7 +94,7 @@ export const STYLES = {
     border: `1px solid ${COLORS.border}`,
     color: COLORS.text,
     padding: '6px 12px',
-    borderRadius: '8px',
+    borderRadius: '4px',
     fontSize: '13px',
   },
   select: {
@@ -86,14 +102,14 @@ export const STYLES = {
     border: `1px solid ${COLORS.border}`,
     color: COLORS.text,
     padding: '6px 12px',
-    borderRadius: '8px',
+    borderRadius: '4px',
     fontSize: '13px',
   },
   button: {
     background: COLORS.button,
     color: '#fff',
     border: 'none',
-    borderRadius: '8px',
+    borderRadius: '4px',
     padding: '7px 18px',
     fontSize: '13px',
     fontWeight: 600,
@@ -162,8 +178,8 @@ export function warmupBandShape(startStep, endStep) {
     yref: 'paper',
     y0: 0,
     y1: 1,
-    fillcolor: 'rgba(130, 144, 165, 0.07)',
-    line: { color: 'rgba(130, 144, 165, 0.35)', width: 1, dash: 'dot' },
+    fillcolor: 'rgba(126, 135, 149, 0.07)',
+    line: { color: 'rgba(126, 135, 149, 0.35)', width: 1, dash: 'dot' },
   }
 }
 
@@ -178,7 +194,7 @@ export function warmupAnnotation(startStep, endStep) {
     showarrow: false,
     yanchor: 'top',
     font: { color: COLORS.muted, size: 10 },
-    bgcolor: 'rgba(19, 26, 38, 0.85)',
+    bgcolor: 'rgba(15, 17, 21, 0.85)',
     bordercolor: COLORS.border,
     borderwidth: 1,
     borderpad: 4,
