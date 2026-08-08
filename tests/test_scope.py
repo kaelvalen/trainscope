@@ -174,3 +174,73 @@ def test_step_records_custom_grad_norm_after_clip(tmp_path):
     d = table.to_pydict()
     assert d["grad_norm_after_clip"][0] == pytest.approx(0.123)
     assert d["grad_norm_before_clip"][0] != pytest.approx(0.123)
+
+
+def test_step_records_realistic_external_clip_flow(tmp_path):
+    """End-to-end external-clip flow: the caller clips with
+    clip_grad_norm_, then passes the real post-clip norm. Since scope reads
+    the model's (already clipped) gradients as its 'before' reading, both
+    fields must agree with the actual post-clip norm."""
+    model = nn.Linear(4, 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.01)
+    cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name="scope_real_clip")
+    scope = TrainScope(model, opt, cfg).attach()
+
+    x = torch.randn(2, 4)
+    y = torch.randn(2, 1)
+    opt.zero_grad()
+    loss = nn.functional.mse_loss(model(x), y)
+    loss.backward()
+
+    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
+    with torch.no_grad():
+        post_clip_norm = torch.sqrt(
+            sum(
+                (p.grad.detach().pow(2).sum() for p in model.parameters() if p.grad is not None),
+                torch.zeros(()),
+            )
+        ).item()
+
+    scope.step(loss.item(), grad_norm_after_clip=post_clip_norm, batch_index=0)
+    scope.detach()
+
+    reader = ipc.open_file(str(tmp_path / "scope_real_clip" / "global.arrow"))
+    table = reader.read_all()
+    d = table.to_pydict()
+    assert d["grad_norm_after_clip"][0] == pytest.approx(post_clip_norm)
+    assert d["grad_norm_before_clip"][0] == pytest.approx(post_clip_norm)
+    assert post_clip_norm <= 0.1 + 1e-6
+
+
+def test_step_defaults_grad_norm_after_clip_to_before_when_omitted(tmp_path):
+    """When grad_norm_after_clip is omitted, the recorded value must mirror
+    grad_norm_before_clip (and equal the actually measured norm) — guarding
+    against regressions where the field becomes None or diverges."""
+    model = nn.Linear(4, 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.01)
+    cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name="scope_default_after_clip")
+    scope = TrainScope(model, opt, cfg).attach()
+
+    x = torch.randn(2, 4)
+    y = torch.randn(2, 1)
+    opt.zero_grad()
+    loss = nn.functional.mse_loss(model(x), y)
+    loss.backward()
+
+    with torch.no_grad():
+        measured_norm = torch.sqrt(
+            sum(
+                (p.grad.detach().pow(2).sum() for p in model.parameters() if p.grad is not None),
+                torch.zeros(()),
+            )
+        ).item()
+
+    scope.step(loss.item(), batch_index=0)
+    scope.detach()
+
+    reader = ipc.open_file(str(tmp_path / "scope_default_after_clip" / "global.arrow"))
+    table = reader.read_all()
+    d = table.to_pydict()
+    assert d["grad_norm_after_clip"][0] == pytest.approx(measured_norm)
+    assert d["grad_norm_before_clip"][0] == pytest.approx(measured_norm)
+    assert d["grad_norm_after_clip"][0] == d["grad_norm_before_clip"][0]
