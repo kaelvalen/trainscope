@@ -5,9 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - Signal-Analysis UI Redesign
 
 ### Changed
+- Redesigned the UI as a signal-analysis instrument instead of a generic dark SaaS dashboard: cold near-black palette (neutral-cold `220 20% 4%` background), teal-green oscilloscope accent (`168 68% 58%`) replacing the pastel cyan, a more saturated alarm red, and border radii scaled from `0.75rem` to `0.25rem` (pill shapes untouched). UI text is now Inter with tabular numerals; all chart text and hover values render in JetBrains Mono. The app background swaps the soft radial glow for a faint accent-colored grid texture.
+- Chart interaction is now consistent across all four views: the Plotly modebar is enabled everywhere with scroll-zoom and drag-to-zoom (previously Timeline-only), and Plotly's noisy lasso/select/spikelines/hover-toggle buttons are stripped from the toolbar.
 - `RollingBuffer` getters keep their O(n) segment merge but restore a cheap safety net: an O(n) order check falls back to an explicit sort if the two segments are ever out of chronological order, so a future insertion path that violates the segment-ordering invariant cannot silently produce out-of-order rows (the defensive sort removed in 0.7.0 would otherwise have been lost).
 
 ## [0.7.1] - General Bugfix Release
