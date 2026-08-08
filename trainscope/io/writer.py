@@ -107,10 +107,10 @@ def _make_layer_batch(rows: list[dict]) -> pa.RecordBatch:
             "weight_l2_norm": pa.array(
                 [r.get("weight_l2_norm", 0.0) for r in rows], type=pa.float64()
             ),
-            "act_mean": pa.array([r.get("act_mean", 0.0) for r in rows], type=pa.float64()),
-            "act_std": pa.array([r.get("act_std", 0.0) for r in rows], type=pa.float64()),
-            "act_max_abs": pa.array([r.get("act_max_abs", 0.0) for r in rows], type=pa.float64()),
-            "act_kurtosis": pa.array([r.get("act_kurtosis", 0.0) for r in rows], type=pa.float64()),
+            "act_mean": pa.array([r.get("act_mean") for r in rows], type=pa.float64()),
+            "act_std": pa.array([r.get("act_std") for r in rows], type=pa.float64()),
+            "act_max_abs": pa.array([r.get("act_max_abs") for r in rows], type=pa.float64()),
+            "act_kurtosis": pa.array([r.get("act_kurtosis") for r in rows], type=pa.float64()),
             "grad_nan_inf_ratio": pa.array(
                 [r.get("grad_nan_inf_ratio", 0.0) for r in rows], type=pa.float64()
             ),
@@ -128,9 +128,9 @@ def _make_layer_batch(rows: list[dict]) -> pa.RecordBatch:
                 [r.get("weight_max_abs", 0.0) for r in rows], type=pa.float64()
             ),
             "weight_min": pa.array([r.get("weight_min", 0.0) for r in rows], type=pa.float64()),
-            "act_min": pa.array([r.get("act_min", 0.0) for r in rows], type=pa.float64()),
-            "act_max": pa.array([r.get("act_max", 0.0) for r in rows], type=pa.float64()),
-            "act_median": pa.array([r.get("act_median", 0.0) for r in rows], type=pa.float64()),
+            "act_min": pa.array([r.get("act_min") for r in rows], type=pa.float64()),
+            "act_max": pa.array([r.get("act_max") for r in rows], type=pa.float64()),
+            "act_median": pa.array([r.get("act_median") for r in rows], type=pa.float64()),
         },
         schema=LAYER_SCHEMA,
     )
@@ -289,13 +289,15 @@ class DiskWriter:
     # --------------------------------------------------------------------- #
     # Metadata
     # --------------------------------------------------------------------- #
-    def write_meta(self, model_name: str, model_config: dict):
+    def write_meta(self, model_name: str, model_config: dict, detector_info: dict | None = None):
         meta = {
             "model_name": model_name,
             "model_config": model_config,
             "trainscope_config": self._config.to_dict(),
             "start_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
+        if detector_info is not None:
+            meta["detector"] = detector_info
         with open(self._run_path / "meta.json", "w") as f:
             json.dump(meta, f, indent=2)
         logger.debug("Wrote meta.json for run %s", self._run_path.name)

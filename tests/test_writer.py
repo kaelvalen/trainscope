@@ -54,6 +54,50 @@ class TestDiskWriter:
         assert "trainscope_config" in meta
         assert "start_time" in meta
 
+    def test_write_meta_includes_detector_info(self, tmp_path):
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+        writer.write_meta(
+            "TestModel",
+            {"layers": 12},
+            detector_info={"name": "changepoint", "min_observations": 30},
+        )
+        writer.close()
+
+        with open(run_path / "meta.json") as f:
+            meta = json.load(f)
+        assert meta["detector"] == {"name": "changepoint", "min_observations": 30}
+
+    def test_layer_null_activation_metrics_round_trip(self, tmp_path):
+        """Unmeasured activation metrics must persist as null, not as 0.0,
+        so the UI can distinguish 'not measured' from 'measured zero'."""
+        config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+
+        measured = make_layer_snap(0)
+        measured["act_kurtosis"] = 2.5
+        unmeasured = make_layer_snap(1)
+        unmeasured["act_mean"] = None
+        unmeasured["act_std"] = None
+        unmeasured["act_max_abs"] = None
+        unmeasured["act_kurtosis"] = None
+        unmeasured["act_min"] = None
+        unmeasured["act_max"] = None
+        unmeasured["act_median"] = None
+
+        writer.append_layer("layer0", measured)
+        writer.append_layer("layer0", unmeasured)
+        writer.flush()
+        writer.close()
+
+        reader = ipc.open_file(str(run_path / "layers" / "layer0.arrow"))
+        table = reader.read_all()
+        assert table.column("act_kurtosis").to_pylist() == [2.5, None]
+        assert table.column("act_mean").to_pylist() == [0.0, None]
+        assert table.column("act_median").to_pylist() == [None, None]
+
     def test_append_global_flush_creates_arrow(self, tmp_path):
         config = TrainScopeConfig(run_dir=str(tmp_path), run_name="test_run")
         run_path = tmp_path / "test_run"

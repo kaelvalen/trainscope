@@ -1,6 +1,8 @@
+import json
 import math
 import warnings
 
+import pyarrow.ipc as ipc
 import torch
 import torch.nn as nn
 
@@ -16,6 +18,19 @@ def test_attach_writes_meta(tmp_path):
 
     meta_file = tmp_path / "scope_meta" / "meta.json"
     assert meta_file.exists()
+
+
+def test_meta_records_detector_warmup_info(tmp_path):
+    model = nn.Linear(4, 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.01)
+    cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name="scope_detector_meta")
+    scope = TrainScope(model, opt, cfg).attach()
+    scope.detach()
+
+    with open(tmp_path / "scope_detector_meta" / "meta.json") as f:
+        meta = json.load(f)
+    assert meta["detector"]["name"] == "changepoint"
+    assert meta["detector"]["min_observations"] == 30
 
 
 def test_step_records_global_and_layers(tmp_path):
@@ -94,3 +109,43 @@ def test_inf_loss_does_not_poison_detector_or_report_spike(tmp_path):
     assert finite_result is None
 
     scope.detach()
+
+
+def test_unmeasured_activation_metrics_are_null_not_zero(tmp_path):
+    """Steps between activation_metrics_every_n_steps intervals must persist
+    null activation metrics so the UI can tell 'not measured' apart from
+    'measured and zero'."""
+    model = nn.Sequential(nn.Linear(4, 2), nn.ReLU(), nn.Linear(2, 1))
+    opt = torch.optim.SGD(model.parameters(), lr=0.01)
+    cfg = TrainScopeConfig(
+        run_dir=str(tmp_path),
+        run_name="scope_act_nulls",
+        trace_every_n_steps=1,
+        activation_metrics_every_n_steps=5,
+        full_resolution_window=20,
+        spike_window_before=5,
+    )
+    scope = TrainScope(model, opt, cfg).attach()
+
+    x = torch.randn(2, 4)
+    y = torch.randn(2, 1)
+    for step in range(6):
+        opt.zero_grad()
+        loss = nn.functional.mse_loss(model(x), y)
+        loss.backward()
+        scope.step(loss.item(), batch_index=step)
+    scope.detach()
+
+    layer_path = next((tmp_path / "scope_act_nulls" / "layers").glob("*.arrow"))
+    reader = ipc.open_file(str(layer_path))
+    table = reader.read_all()
+    d = table.to_pydict()
+    steps = d["step"]
+    kurtosis = d["act_kurtosis"]
+
+    # Steps 0 and 5 are multiples of 5: measured (a real float).
+    for row_idx, step in enumerate(steps):
+        if step % 5 == 0:
+            assert isinstance(kurtosis[row_idx], float)
+        else:
+            assert kurtosis[row_idx] is None

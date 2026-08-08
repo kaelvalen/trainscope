@@ -148,3 +148,39 @@ export function scrubLineShape(step, options = {}) {
     line: { color, width },
   }
 }
+
+/**
+ * Plotly band shape covering the detector's warmup window (no anomaly scores
+ * are produced until the detector has seen `min_observations` loss values).
+ */
+export function warmupBandShape(startStep, endStep) {
+  return {
+    type: 'rect',
+    xref: 'x',
+    x0: startStep,
+    x1: endStep,
+    yref: 'paper',
+    y0: 0,
+    y1: 1,
+    fillcolor: 'rgba(130, 144, 165, 0.07)',
+    line: { color: 'rgba(130, 144, 165, 0.35)', width: 1, dash: 'dot' },
+  }
+}
+
+/** Plotly annotation labelling the detector warmup band. */
+export function warmupAnnotation(startStep, endStep) {
+  return {
+    x: startStep + Math.max(1, (endStep - startStep) * 0.02),
+    y: 0.98,
+    xref: 'x',
+    yref: 'paper',
+    text: 'detector warming up — spikes not yet reported',
+    showarrow: false,
+    yanchor: 'top',
+    font: { color: COLORS.muted, size: 10 },
+    bgcolor: 'rgba(19, 26, 38, 0.85)',
+    bordercolor: COLORS.border,
+    borderwidth: 1,
+    borderpad: 4,
+  }
+}

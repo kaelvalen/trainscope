@@ -343,6 +343,8 @@ export default function SpikeInspector() {
                         type: 'scatter',
                         mode: 'lines',
                         name: 'Kurtosis',
+                        // Unsampled steps persist as null and render as gaps.
+                        connectgaps: false,
                         line: { color: CHART_COLORS.kurtosis, width: 1.5 },
                       },
                     ]}
