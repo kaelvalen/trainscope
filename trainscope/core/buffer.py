@@ -47,43 +47,37 @@ class RollingBuffer:
         self._full_resolution.append(entry)
 
     def get_global_steps(self) -> list[dict]:
-        seen_steps = set()
-        result = []
+        # Both deques are step-sorted and disjoint (eviction moves a step from
+        # full resolution to decimated history exactly once), so a linear
+        # dedup-merge preserves chronological order without sorting.
+        combined: dict[int, dict] = {}
         for entry in self._decimated:
-            s = entry["global"].get("step")
-            if s not in seen_steps:
-                seen_steps.add(s)
-                result.append(entry["global"])
+            combined[entry["global"]["step"]] = entry["global"]
         for entry in self._full_resolution:
-            s = entry["global"].get("step")
-            if s not in seen_steps:
-                seen_steps.add(s)
-                result.append(entry["global"])
-        result.sort(key=lambda x: x.get("step", 0))
-        return result
+            combined[entry["global"]["step"]] = entry["global"]
+        return list(combined.values())
 
     def get_layer_steps(self, layer_name: str) -> list[dict]:
-        seen_steps = set()
-        result = []
+        combined: dict[int, dict] = {}
         for entry in self._decimated:
-            s = entry["global"].get("step")
-            if s not in seen_steps and layer_name in entry["layers"]:
-                seen_steps.add(s)
-                result.append(entry["layers"][layer_name])
+            step = entry["global"]["step"]
+            if step not in combined and layer_name in entry["layers"]:
+                combined[step] = entry["layers"][layer_name]
         for entry in self._full_resolution:
-            s = entry["global"].get("step")
-            if s not in seen_steps and layer_name in entry["layers"]:
-                seen_steps.add(s)
-                result.append(entry["layers"][layer_name])
-        result.sort(key=lambda x: x.get("step", 0))
-        return result
+            step = entry["global"]["step"]
+            if step not in combined and layer_name in entry["layers"]:
+                combined[step] = entry["layers"][layer_name]
+        return list(combined.values())
 
     def get_window(self, center_step: int, before: int, after: int) -> list[dict]:
         lo, hi = center_step - before, center_step + after
-        result = [
-            entry
-            for entry in list(self._decimated) + list(self._full_resolution)
-            if lo <= entry["global"].get("step", 0) <= hi
-        ]
-        result.sort(key=lambda x: x["global"].get("step", 0))
-        return result
+        combined: dict[int, dict] = {}
+        for entry in self._decimated:
+            step = entry["global"]["step"]
+            if lo <= step <= hi:
+                combined[step] = entry
+        for entry in self._full_resolution:
+            step = entry["global"]["step"]
+            if lo <= step <= hi:
+                combined[step] = entry
+        return list(combined.values())

@@ -25,6 +25,7 @@ from trainscope.io.writer import (
     _make_global_batch,
     _make_layer_batch,
     _make_plugin_metrics_batch,
+    read_arrow_rows_bytes,
 )
 
 try:
@@ -34,8 +35,6 @@ except Exception:  # pragma: no cover
     fsspec = None
 
 logger = logging.getLogger("trainscope")
-
-FLUSH_INTERVAL = 100
 
 
 def _encode_layer_name(name: str) -> str:
@@ -51,6 +50,13 @@ class RemoteWriter:
 
     The implementation uses ``fsspec`` so any scheme it supports (including
     ``memory://`` for tests) works without code changes.
+
+    Unlike :class:`DiskWriter`, remote objects (e.g. S3 keys) cannot be
+    appended to, so each flush rewrites the full row list as one IPC *stream*
+    object. To bound write amplification the rewrite happens only every
+    ``config.compaction_every_n_steps`` rows (default 1000) and on
+    ``flush()``/``close()``; new rows are buffered in memory in between, so
+    remote artifacts lag the training run by up to that many steps.
     """
 
     def __init__(
@@ -86,6 +92,10 @@ class RemoteWriter:
         self._n_global_rows = 0
         self._last_step: int | None = None
         self._layer_files: set[str] = set()
+        # Rows appended since the last full object rewrite.
+        self._global_rows_since_write = 0
+        self._layer_rows_since_write: dict[str, int] = {}
+        self._plugin_rows_since_write = 0
 
         if self._config.resume:
             self._load_resume_state()
@@ -122,13 +132,8 @@ class RemoteWriter:
         if not self._fs.exists(path):
             return []
         with self._fs.open(path, "rb") as f:
-            bio = io.BytesIO(f.read())
-        with ipc.open_file(bio) as reader:
-            table = reader.read_all()
-        pydict = table.to_pydict()
-        if not pydict:
-            return []
-        return [dict(zip(pydict.keys(), values)) for values in zip(*pydict.values())]
+            data = f.read()
+        return read_arrow_rows_bytes(data)
 
     def _load_resume_state(self):
         global_rows = self._read_arrow_rows(self._global_path())
@@ -190,7 +195,25 @@ class RemoteWriter:
     # Arrow helpers
     # ------------------------------------------------------------------ #
     @staticmethod
-    def _write_arrow_bytes(schema, rows: list[dict]) -> bytes:
+    def _write_stream_bytes(schema, rows: list[dict]) -> bytes:
+        """Serialize ``rows`` as one IPC *stream* (matching DiskWriter's
+        on-disk format for main metric streams)."""
+        bio = io.BytesIO()
+        with ipc.new_stream(bio, schema) as writer:
+            if schema == GLOBAL_SCHEMA:
+                writer.write_batch(_make_global_batch(rows))
+            elif schema == LAYER_SCHEMA:
+                writer.write_batch(_make_layer_batch(rows))
+            elif schema == PLUGIN_METRICS_SCHEMA:
+                writer.write_batch(_make_plugin_metrics_batch(rows))
+            else:
+                raise ValueError(f"Unsupported schema {schema}")
+        return bio.getvalue()
+
+    @staticmethod
+    def _write_file_bytes(schema, rows: list[dict]) -> bytes:
+        """Serialize ``rows`` as a legacy IPC *file* (spike windows, which are
+        written once and never appended to)."""
         bio = io.BytesIO()
         with ipc.new_file(bio, schema) as writer:
             if schema == GLOBAL_SCHEMA:
@@ -207,34 +230,37 @@ class RemoteWriter:
         rows = self._global_rows + self._global_buffer
         if not rows:
             return
-        data = self._write_arrow_bytes(GLOBAL_SCHEMA, rows)
+        data = self._write_stream_bytes(GLOBAL_SCHEMA, rows)
         with self._fs.open(self._global_path(), "wb") as f:
             f.write(data)
         self._global_rows = rows
         self._global_buffer = []
+        self._global_rows_since_write = 0
         self._n_global_rows = len(rows)
 
     def _write_layer(self, layer_name: str):
         rows = self._layer_rows.get(layer_name, []) + self._layer_buffers.get(layer_name, [])
         if not rows:
             return
-        data = self._write_arrow_bytes(LAYER_SCHEMA, rows)
+        data = self._write_stream_bytes(LAYER_SCHEMA, rows)
         with self._fs.open(self._layer_path(layer_name), "wb") as f:
             f.write(data)
         self._layer_rows[layer_name] = rows
         self._layer_files.add(layer_name)
         if layer_name in self._layer_buffers:
             del self._layer_buffers[layer_name]
+        self._layer_rows_since_write[layer_name] = 0
 
     def _write_plugin_metrics(self):
         rows = self._plugin_metrics_rows + self._plugin_metrics_buffer
         if not rows:
             return
-        data = self._write_arrow_bytes(PLUGIN_METRICS_SCHEMA, rows)
+        data = self._write_stream_bytes(PLUGIN_METRICS_SCHEMA, rows)
         with self._fs.open(self._plugin_metrics_path(), "wb") as f:
             f.write(data)
         self._plugin_metrics_rows = rows
         self._plugin_metrics_buffer = []
+        self._plugin_rows_since_write = 0
 
     # ------------------------------------------------------------------ #
     # Public append API
@@ -246,7 +272,8 @@ class RemoteWriter:
         step = snap.get("step")
         if step is not None:
             self._last_step = step
-        if len(self._global_buffer) >= FLUSH_INTERVAL:
+        self._global_rows_since_write += 1
+        if self._global_rows_since_write >= self._config.compaction_every_n_steps:
             self._write_global()
 
     def append_layer(self, layer_name: str, snap: dict):
@@ -255,7 +282,9 @@ class RemoteWriter:
         if layer_name not in self._layer_buffers:
             self._layer_buffers[layer_name] = []
         self._layer_buffers[layer_name].append(snap)
-        if len(self._layer_buffers[layer_name]) >= FLUSH_INTERVAL:
+        n_since = self._layer_rows_since_write.get(layer_name, 0) + 1
+        self._layer_rows_since_write[layer_name] = n_since
+        if n_since >= self._config.compaction_every_n_steps:
             self._write_layer(layer_name)
 
     def append_plugin_metrics(self, step: int, plugin_name: str, metrics: dict[str, float]):
@@ -270,7 +299,8 @@ class RemoteWriter:
                     "value": float(value),
                 }
             )
-        if len(self._plugin_metrics_buffer) >= FLUSH_INTERVAL:
+            self._plugin_rows_since_write += 1
+        if self._plugin_rows_since_write >= self._config.compaction_every_n_steps:
             self._write_plugin_metrics()
 
     # ------------------------------------------------------------------ #
@@ -287,7 +317,7 @@ class RemoteWriter:
 
         global_rows = [entry["global"] for entry in window if "global" in entry]
         if global_rows:
-            data = self._write_arrow_bytes(GLOBAL_SCHEMA, global_rows)
+            data = self._write_file_bytes(GLOBAL_SCHEMA, global_rows)
             with self._fs.open(f"{spike_dir}/spike_step_{spike_step}.arrow", "wb") as f:
                 f.write(data)
 
@@ -298,7 +328,7 @@ class RemoteWriter:
                 if not rows:
                     continue
                 encoded = _encode_layer_name(layer_name)
-                data = self._write_arrow_bytes(LAYER_SCHEMA, rows)
+                data = self._write_file_bytes(LAYER_SCHEMA, rows)
                 with self._fs.open(f"{layers_dir}/{encoded}.arrow", "wb") as f:
                     f.write(data)
 

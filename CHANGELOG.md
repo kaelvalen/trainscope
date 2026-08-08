@@ -5,18 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.1] - General Bugfix Release
 
 ### Changed
-- PELT-triggered spikes no longer carry a clamped `|score| == threshold`: `ChangePointDetector` now returns the raw median/MAD-normalized deviation `(loss - median) / (1.4826 * MAD)` on the PELT path, preserving the true magnitude of the change point. CUSUM-triggered spikes (the default path) are unchanged and still satisfy `|score| >= threshold`. This is a behavior change for runs with the optional `ruptures` extra installed: subtle PELT-detected change points can now report scores below the threshold instead of a flat threshold value.
-- `DiskWriter` now writes global/layer/plugin-metrics streams in the Arrow IPC *stream* format with true appends: each flush persists only the new rows, and the full file is rewritten (compacted) only every `compaction_every_n_steps` steps (default 1000) instead of on every flush. This removes the O(n²) total write cost on long runs — e.g. a 100k-step run flushes in ~11s instead of tens of minutes — while the file stays readable by the UI server at every flush. Runs written by older versions (legacy IPC file format) remain readable, and resuming one rewrites it into the appendable format on the next flush. `RemoteWriter` is unchanged (remote objects like S3 keys cannot be appended to).
+- `RemoteWriter` (S3/GCS/Azure) now rewrites its objects on the same `compaction_every_n_steps` cadence instead of every 100 rows, bounding write amplification on large runs; rows are buffered in memory in between (remote objects cannot be appended to, and are not watchable live by the UI server anyway). It also reads both on-disk formats (legacy IPC files and the stream format) and writes stream-format objects for consistency.
+
+### Fixed
+- The MLflow integration logged `top_grad_layer` and `spike_step` with `log_param`, which MLflow rejects on the second call with a different value (`Changing param values is not allowed`); the error was swallowed by `except Exception`, so MLflow users silently lost all logging after the first step/spike. The layer name is now logged as a text artifact (`top_grad_layer.txt`) and the spike step as a metric.
+- `optimizer_v_norm` matched the optimizer's exact class name (`Adam`/`AdamW`), so fused/8-bit/wrapped Adam variants (bitsandbytes, apex, deepspeed) and user subclasses silently reported `0.0`. The metric now duck-types on the Adam-family state contract (`exp_avg_sq`).
+- `RollingBuffer.get_global_steps`/`get_layer_steps`/`get_window` sorted and copied the full history on every call; they now linearly merge the two already-sorted, disjoint segments (O(n) instead of O(n log n)).
+
+## [0.7.0] - Write-Path Performance
+
+### Changed
+- `DiskWriter` now writes global/layer/plugin-metrics streams in the Arrow IPC *stream* format with true appends: each flush persists only the new rows, and the full file is rewritten (compacted) only every `compaction_every_n_steps` steps (default 1000) instead of on every flush. This removes the O(n²) total write cost on long runs — e.g. a 100k-step run flushes in ~11s instead of tens of minutes — while the file stays readable by the UI server at every flush. Runs written by older versions (legacy IPC file format) remain readable, and resuming one rewrites it into the appendable format on the next flush.
 
 ### Added
-- `TrainScope.step()` accepts an optional `grad_norm_after_clip=` parameter. Callers that clip gradients externally (TrainScope itself no longer clips) can record the real post-clip norm instead of a mirror of `grad_norm_before_clip`.
-- New `compaction_every_n_steps` config field (default 1000) controlling how often the append-only Arrow files are fully rewritten.
+- New `compaction_every_n_steps` config field (default 1000) controlling how often the Arrow streams are fully rewritten (local) or re-uploaded (remote).
 
 ### Fixed
 - Prometheus telemetry labelled requests with the concrete request path, so path-parameterized endpoints like `/api/layers/{layer_name}` created one time series per unique layer name (unbounded cardinality). The `path` label now uses the route template, e.g. `/api/layers/{layer_name}`.
+
+## [0.6.0] - PELT Score Semantics
+
+### Changed
+- PELT-triggered spikes no longer carry a clamped `|score| == threshold`: `ChangePointDetector` now returns the raw median/MAD-normalized deviation `(loss - median) / (1.4826 * MAD)` on the PELT path, preserving the true magnitude of the change point. CUSUM-triggered spikes (the default path) are unchanged and still satisfy `|score| >= threshold`. This is a behavior change for runs with the optional `ruptures` extra installed: subtle PELT-detected change points can now report scores below the threshold instead of a flat threshold value.
+
+### Added
+- `TrainScope.step()` accepts an optional `grad_norm_after_clip=` parameter. Callers that clip gradients externally (TrainScope itself no longer clips) can record the real post-clip norm instead of a mirror of `grad_norm_before_clip`.
 
 ## [0.5.1] - Display & Verification Fixes
 

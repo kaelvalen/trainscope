@@ -169,11 +169,12 @@ class TrainScope:
         return math.sqrt(total_sq)
 
     def _compute_optimizer_v_norm(self) -> float:
+        # Duck-typing on the Adam-family state contract rather than an exact
+        # class-name match: fused/8-bit/wrapped optimizers (bitsandbytes,
+        # apex, deepspeed) and user subclasses of Adam/AdamW all expose
+        # "exp_avg_sq" in their state but carry different class names.
         total_sq = 0.0
         state = self._optimizer.state
-        opt_type = type(self._optimizer).__name__
-        if opt_type not in ("Adam", "AdamW"):
-            return 0.0
         for param in self._model.parameters():
             if param in state and "exp_avg_sq" in state[param]:
                 v = state[param]["exp_avg_sq"]
