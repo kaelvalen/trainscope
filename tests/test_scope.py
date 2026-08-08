@@ -241,3 +241,47 @@ def test_step_defaults_grad_norm_after_clip_to_before_when_omitted(tmp_path):
     assert rows[0]["grad_norm_after_clip"] == pytest.approx(measured_norm)
     assert rows[0]["grad_norm_before_clip"] == pytest.approx(measured_norm)
     assert rows[0]["grad_norm_after_clip"] == rows[0]["grad_norm_before_clip"]
+
+
+def test_optimizer_v_norm_detects_adam_subclasses(tmp_path):
+    """The v-norm metric must work for Adam-family optimizers regardless of
+    their concrete class name (fused/8-bit variants, user subclasses)."""
+
+    class MyAdamW(torch.optim.AdamW):
+        pass
+
+    model = nn.Linear(4, 1)
+    opt = MyAdamW(model.parameters(), lr=0.01)
+    cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name="scope_vnorm_adam_subclass")
+    scope = TrainScope(model, opt, cfg).attach()
+
+    x = torch.randn(2, 4)
+    y = torch.randn(2, 1)
+    opt.zero_grad()
+    loss = nn.functional.mse_loss(model(x), y)
+    loss.backward()
+    opt.step()  # Adam-family state (exp_avg_sq) is only populated on step()
+    scope.step(loss.item(), batch_index=0)
+    scope.detach()
+
+    rows = read_arrow_rows_sync(tmp_path / "scope_vnorm_adam_subclass" / "global.arrow")
+    assert rows[0]["optimizer_v_norm"] > 0.0
+
+
+def test_optimizer_v_norm_zero_for_non_adam(tmp_path):
+    """Non-Adam optimizers have no exp_avg_sq state; the metric must be 0.0."""
+    model = nn.Linear(4, 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.01)
+    cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name="scope_vnorm_sgd")
+    scope = TrainScope(model, opt, cfg).attach()
+
+    x = torch.randn(2, 4)
+    y = torch.randn(2, 1)
+    opt.zero_grad()
+    loss = nn.functional.mse_loss(model(x), y)
+    loss.backward()
+    scope.step(loss.item(), batch_index=0)
+    scope.detach()
+
+    rows = read_arrow_rows_sync(tmp_path / "scope_vnorm_sgd" / "global.arrow")
+    assert rows[0]["optimizer_v_norm"] == 0.0

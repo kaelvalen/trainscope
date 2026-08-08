@@ -25,6 +25,51 @@ def _mock_wandb_module(fake_run: FakeWandbRun) -> MagicMock:
     return module
 
 
+class MlflowParamError(Exception):
+    """Mirror of mlflow.exceptions.MlflowException raised on param mutation."""
+
+
+class StrictMlflowMock:
+    """Mimic the real MLflow client contract that MagicMock misses.
+
+    Real MLflow rejects re-logging a parameter with a different value within
+    the same run (``MlflowException: Changing param values is not allowed``).
+    Metrics and text artifacts are append/overwrite-friendly and never raise.
+    """
+
+    def __init__(self):
+        self.params: dict[str, object] = {}
+        self.metric_calls: list[tuple[str, object, object]] = []
+        self.text_calls: list[tuple[str, str | None]] = []
+        self.active = None
+        self.started = []
+
+    def set_experiment(self, name):
+        pass
+
+    def active_run(self):
+        return self.active
+
+    def start_run(self, **kwargs):
+        self.started.append(kwargs)
+        return object()
+
+    def log_param(self, key, value):
+        if key in self.params and self.params[key] != value:
+            raise MlflowParamError(f"Changing param values is not allowed for param '{key}'")
+        self.params[key] = value
+
+    def log_metric(self, key, value, step=None):
+        self.metric_calls.append((key, value, step))
+
+    def log_metrics(self, metrics, step=None):
+        for key, value in metrics.items():
+            self.log_metric(key, value, step)
+
+    def log_text(self, text, artifact_file=None):
+        self.text_calls.append((text, artifact_file))
+
+
 class TestBuildCallbacks:
     def test_empty_config_returns_empty_list(self):
         assert build_callbacks(None) == []
@@ -97,6 +142,43 @@ class TestBuildCallbacks:
         args, kwargs = mock_mlflow.log_metrics.call_args
         assert "train_loss" in args[0]
         assert kwargs.get("step") == 7
+
+    def test_mlflow_callback_repeated_steps_with_changing_top_layer(self):
+        """log_param is forbidden for changing values in MLflow; the callback
+        must not call it per step. A strict mock (mirroring MLflow's param
+        immutability) must never raise across multiple steps."""
+        strict = StrictMlflowMock()
+        with patch.dict("sys.modules", {"mlflow": strict}):
+            callback = build_callbacks({"mlflow": {}})[0]
+
+        callback.on_step(
+            {"step": 1, "loss": 0.8, "grad_norm_before_clip": 0.2, "lr": 0.01},
+            {"l1": {"grad_l2_norm": 0.3}},
+        )
+        callback.on_step(
+            {"step": 2, "loss": 0.7, "grad_norm_before_clip": 0.1, "lr": 0.01},
+            {"l2": {"grad_l2_norm": 0.9}},
+        )
+
+        assert "top_grad_layer" not in strict.params
+        assert strict.text_calls[-1] == ("l2", "top_grad_layer.txt")
+        assert ("max_grad_l2_norm", 0.9, 2) in strict.metric_calls
+
+    def test_mlflow_on_spike_repeated_spikes(self):
+        """The spike step must be logged as a metric (or not at all), never as
+        a param: a second spike would otherwise violate MLflow's param
+        immutability and silently drop all subsequent logging."""
+        strict = StrictMlflowMock()
+        with patch.dict("sys.modules", {"mlflow": strict}):
+            callback = build_callbacks({"mlflow": {}})[0]
+
+        callback.on_spike({"step": 10, "z_score": 5.0, "loss": 0.1}, {"step": 10}, None)
+        callback.on_spike({"step": 42, "z_score": 6.0, "loss": 0.2}, {"step": 42}, None)
+
+        assert "spike_step" not in strict.params
+        assert ("spike_step", 10, 10) in strict.metric_calls
+        assert ("spike_step", 42, 42) in strict.metric_calls
+        assert ("spike_z_score", 6.0, 42) in strict.metric_calls
 
 
 class TestBuildAlerters:
