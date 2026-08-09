@@ -34,16 +34,6 @@ def make_detector(config: "TrainScopeConfig | dict | None" = None) -> AnomalyDet
         detector_cfg = {"name": "z_score"}
     elif hasattr(config, "detector"):
         detector_cfg = dict(getattr(config, "detector") or {"name": "z_score"})
-        # spike_threshold is scaled for the z_score detector's raw z-score
-        # cutoff; other detectors either don't accept a "threshold" kwarg
-        # (e.g. percentile) or use it on a different scale (e.g. CUSUM's
-        # cumulative-sum decision threshold), so only apply it there.
-        if (
-            detector_cfg.get("name") == "z_score"
-            and "threshold" not in detector_cfg
-            and hasattr(config, "spike_threshold")
-        ):
-            detector_cfg.setdefault("threshold", getattr(config, "spike_threshold"))
     elif isinstance(config, dict):
         detector_cfg = dict(config)
     else:

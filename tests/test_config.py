@@ -73,3 +73,30 @@ class TestTrainScopeConfig:
     def test_device_none_serializes_to_none(self):
         cfg = TrainScopeConfig(device=None)
         assert cfg.to_dict()["device"] is None
+
+    def test_spike_threshold_removed_from_top_level(self):
+        """1.0 removed spike_threshold; detector thresholds live in detector dict."""
+        cfg = TrainScopeConfig()
+        assert "spike_threshold" not in cfg.to_dict()
+
+        with pytest.raises(TypeError, match="spike_threshold"):
+            TrainScopeConfig(spike_threshold=3.5)  # type: ignore[call-arg]
+
+    def test_load_config_rejects_spike_threshold_with_migration_hint(self):
+        from trainscope.core.config import load_config
+
+        with pytest.raises(ValueError, match="detector="):
+            load_config({"spike_threshold": 3.5})
+
+    def test_detector_threshold_in_dict(self):
+        cfg = TrainScopeConfig(detector={"name": "z_score", "threshold": 3.5})
+        assert cfg.detector == {"name": "z_score", "threshold": 3.5}
+
+    def test_z_score_detector_receives_threshold(self):
+        from trainscope.core.detectors import make_detector
+        from trainscope.core.detectors.z_score import ZScoreDetector
+
+        cfg = TrainScopeConfig(detector={"name": "z_score", "threshold": 4.2})
+        det = make_detector(cfg)
+        assert isinstance(det, ZScoreDetector)
+        assert det.threshold == 4.2

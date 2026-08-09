@@ -147,7 +147,6 @@ def main():
     config = TrainScopeConfig(
         run_dir=run_dir,
         run_name="realife_demo",
-        spike_threshold=10.0,
         detector={"name": "changepoint", "threshold": 10.0, "slack": 1.0},
         stop_on_spike=False,
         full_resolution_window=500,

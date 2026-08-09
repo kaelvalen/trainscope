@@ -23,7 +23,6 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          plotly: ['plotly.js-dist-min', 'react-plotly.js'],
           vendor: ['react', 'react-dom', 'lucide-react'],
         },
       },

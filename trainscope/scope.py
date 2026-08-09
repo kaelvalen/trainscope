@@ -27,10 +27,20 @@ logger = logging.getLogger("trainscope")
 
 
 class StopTraining(Exception):
-    def __init__(self, step: int, z_score: float):
-        super().__init__(f"Spike detected at step {step} (z={z_score:.2f})")
+    def __init__(self, step: int, spike_score: float):
+        super().__init__(f"Spike detected at step {step} (score={spike_score:.2f})")
         self.step = step
-        self.z_score = z_score
+        self.spike_score = spike_score
+
+    @property
+    def z_score(self) -> float:
+        warnings.warn(
+            "StopTraining.z_score is deprecated; use .spike_score (the active "
+            "detector's score, not necessarily a z-score).",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.spike_score
 
 
 class TrainScope:
@@ -380,6 +390,9 @@ class TrainScope:
             spike_info = {
                 "step": step_idx,
                 "loss": loss_f,
+                "spike_score": float(score),
+                # Legacy alias: integrations written against pre-1.0 trainscope
+                # read this key. The canonical name is spike_score.
                 "z_score": float(score),
             }
 

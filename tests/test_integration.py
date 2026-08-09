@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from fastapi.testclient import TestClient
 
-from trainscope import TrainScope
+from trainscope import StopTraining, TrainScope
 from trainscope.core.config import TrainScopeConfig
 from trainscope.ui.server import create_app
 
@@ -38,7 +38,7 @@ def _run_training(run_path: Path) -> dict | None:
     config = TrainScopeConfig(
         run_dir=str(run_path),
         run_name="integration_run",
-        spike_threshold=3.5,
+        detector={"name": "z_score", "threshold": 3.5},
         track_memory=True,
         checkpoint_on_spike=True,
         rng_every_n_steps=10,
@@ -78,8 +78,8 @@ def test_integration_detects_spike_and_creates_artifacts(tmp_path: Path) -> None
 
     assert spike is not None
     assert spike["step"] == SPIKE_STEP
-    assert math.isfinite(spike["z_score"])
-    assert abs(spike["z_score"]) > 3.5
+    assert math.isfinite(spike["spike_score"])
+    assert abs(spike["spike_score"]) > 3.5
 
     run_dir = tmp_path / "integration_run"
 
@@ -211,3 +211,97 @@ def test_integration_server_reads_run_directory(tmp_path: Path) -> None:
     spike_layer_response = client.get(f"/api/spikes/{SPIKE_STEP}/layers/{first_layer}")
     assert spike_layer_response.status_code == 200
     assert isinstance(spike_layer_response.json(), list)
+
+
+def test_integration_stop_training_carries_spike_score(tmp_path: Path) -> None:
+    """StopTraining exposes the active detector's score as spike_score."""
+    torch.manual_seed(0)
+
+    model = nn.Sequential(nn.Linear(8, 4), nn.ReLU(), nn.Linear(4, 1))
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+    config = TrainScopeConfig(
+        run_dir=str(tmp_path),
+        run_name="stop_run",
+        stop_on_spike=True,
+        detector={"name": "z_score", "threshold": 3.5},
+    )
+
+    scope = TrainScope(model, optimizer, config).attach()
+
+    y = torch.randn(4, 1)
+    raised = None
+    try:
+        for step in range(50):
+            optimizer.zero_grad()
+            x = torch.randn(4, 8)
+            loss = F.mse_loss(model(x), y)
+            if step == 40:
+                loss = loss * 100.0
+            loss.backward()
+            scope.step(loss.item(), batch_index=step)
+            optimizer.step()
+    except StopTraining as exc:
+        raised = exc
+
+    scope.detach()
+
+    assert raised is not None
+    assert raised.spike_score > 3.5
+
+
+def test_stop_training_z_score_alias_deprecated() -> None:
+    """StopTraining.z_score still works but warns it is a legacy alias."""
+    exc = StopTraining(step=40, spike_score=7.2)
+    assert exc.spike_score == 7.2
+
+    import warnings
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        assert exc.z_score == 7.2
+        assert any(issubclass(w.category, DeprecationWarning) for w in caught)
+
+
+def test_spike_info_contains_spike_score_and_legacy_alias(tmp_path: Path) -> None:
+    """spike_info carries both spike_score (canonical) and z_score (legacy)."""
+    torch.manual_seed(0)
+
+    model = nn.Sequential(nn.Linear(8, 4), nn.ReLU(), nn.Linear(4, 1))
+    optimizer = torch.optim.SGD(model.parameters(), lr=0.0)
+    config = TrainScopeConfig(
+        run_dir=str(tmp_path),
+        run_name="spike_info_run",
+        detector={"name": "z_score", "threshold": 3.5},
+    )
+
+    scope = TrainScope(model, optimizer, config).attach()
+
+    captured = []
+
+    class RecordingCallback:
+        def on_step(self, global_snap=None, layer_snaps=None):
+            pass
+
+        def on_spike(self, spike_info, global_snap=None, layer_snaps=None):
+            captured.append(spike_info)
+
+    scope._callbacks = [RecordingCallback()]
+
+    y = torch.randn(4, 1)
+    for step in range(50):
+        optimizer.zero_grad()
+        x = torch.randn(4, 8)
+        loss = F.mse_loss(model(x), y)
+        if step == 40:
+            loss = loss * 100.0
+        loss.backward()
+        scope.step(loss.item(), batch_index=step)
+        optimizer.step()
+
+    scope.detach()
+
+    assert len(captured) >= 1
+    spike = captured[0]
+    assert "spike_score" in spike
+    assert "z_score" in spike
+    assert spike["spike_score"] == spike["z_score"]

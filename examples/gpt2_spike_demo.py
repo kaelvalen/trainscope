@@ -105,7 +105,6 @@ def main():
     # GPU overhead is significantly lower (~3-8%) due to parallelism.
     config = TrainScopeConfig(
         run_dir="./trainscope_runs",
-        spike_threshold=3.5,
         stop_on_spike=False,
         full_resolution_window=500,
         histogram_every_n_steps=50,
