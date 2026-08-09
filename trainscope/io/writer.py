@@ -67,6 +67,17 @@ PLUGIN_METRICS_SCHEMA = pa.schema(
     ]
 )
 
+# Per-block expert utilization for Mixtral-style MoE models: the fraction of
+# tokens routed to each expert at a step. Added in 1.4.0 (additive — old
+# readers ignore the file entirely).
+MOE_SCHEMA = pa.schema(
+    [
+        pa.field("step", pa.int64()),
+        pa.field("block", pa.string()),
+        pa.field("shares", pa.list_(pa.float64())),
+    ]
+)
+
 FLUSH_INTERVAL = 5
 
 
@@ -146,6 +157,17 @@ def _make_plugin_metrics_batch(rows: list[dict]) -> pa.RecordBatch:
             "value": pa.array([r.get("value", 0.0) for r in rows], type=pa.float64()),
         },
         schema=PLUGIN_METRICS_SCHEMA,
+    )
+
+
+def _make_moe_batch(rows: list[dict]) -> pa.RecordBatch:
+    return pa.record_batch(
+        {
+            "step": pa.array([r.get("step", 0) for r in rows], type=pa.int64()),
+            "block": pa.array([r.get("block", "") for r in rows], type=pa.string()),
+            "shares": pa.array([r.get("shares", []) for r in rows], type=pa.list_(pa.float64())),
+        },
+        schema=MOE_SCHEMA,
     )
 
 
@@ -287,6 +309,7 @@ class DiskWriter:
         self._global_buffer: list[dict] = []
         self._layer_buffers: dict[str, list[dict]] = {}
         self._plugin_metrics_buffer: list[dict] = []
+        self._moe_buffer: list[dict] = []
 
         self._closed = False
 
@@ -295,6 +318,7 @@ class DiskWriter:
         self._all_global_rows: list[dict] = []
         self._all_layer_rows: dict[str, list[dict]] = {}
         self._all_plugin_metrics_rows: list[dict] = []
+        self._all_moe_rows: list[dict] = []
         # Total number of global rows persisted (including rows loaded for resume).
         self._n_global_rows = 0
         # Highest step number seen via append_global (or loaded for resume).
@@ -308,10 +332,12 @@ class DiskWriter:
         self._global_stream: tuple[pa.OSFile, Any] | None = None
         self._layer_streams: dict[str, tuple[pa.OSFile, Any]] = {}
         self._plugin_stream: tuple[pa.OSFile, Any] | None = None
+        self._moe_stream: tuple[pa.OSFile, Any] | None = None
         # Rows appended to the on-disk stream since the last compaction.
         self._global_rows_since_compaction = 0
         self._layer_rows_since_compaction: dict[str, int] = {}
         self._plugin_rows_since_compaction = 0
+        self._moe_rows_since_compaction = 0
         # Set when resume loads rows from a pre-existing file: those files are
         # in the legacy IPC file format and cannot be appended to, so the next
         # flush compacts them into the stream format.
@@ -348,6 +374,9 @@ class DiskWriter:
 
     def _plugin_metrics_path(self) -> Path:
         return self._run_path / "plugin_metrics.arrow"
+
+    def _moe_path(self) -> Path:
+        return self._run_path / "moe.arrow"
 
     # --------------------------------------------------------------------- #
     # Resume support
@@ -388,6 +417,14 @@ class DiskWriter:
             except Exception:
                 logger.exception("Failed to resume plugin_metrics.arrow")
 
+        moe_path = self._moe_path()
+        if moe_path.exists():
+            try:
+                self._all_moe_rows = read_arrow_rows_sync(moe_path)
+                self._needs_compaction.add("moe")
+            except Exception:
+                logger.exception("Failed to resume moe.arrow")
+
     # --------------------------------------------------------------------- #
     # Metadata
     # --------------------------------------------------------------------- #
@@ -417,6 +454,7 @@ class DiskWriter:
             "layer_files": layer_files,
             "n_plugin_metric_rows": len(self._all_plugin_metrics_rows)
             + len(self._plugin_metrics_buffer),
+            "n_moe_rows": len(self._all_moe_rows) + len(self._moe_buffer),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         with open(self._run_path / "manifest.json", "w") as f:
@@ -463,6 +501,20 @@ class DiskWriter:
             )
         if len(self._plugin_metrics_buffer) >= FLUSH_INTERVAL:
             self._flush_plugin_metrics()
+
+    def append_moe(self, step: int, block_name: str, shares: list[float]):
+        """Append per-expert token-share for one MoE block at a step."""
+        if self._closed:
+            raise RuntimeError("DiskWriter is closed")
+        self._moe_buffer.append(
+            {
+                "step": step,
+                "block": block_name,
+                "shares": [float(s) for s in shares],
+            }
+        )
+        if len(self._moe_buffer) >= FLUSH_INTERVAL:
+            self._flush_moe()
 
     # --------------------------------------------------------------------- #
     # Flush logic: append-only, with periodic full compaction
@@ -598,6 +650,33 @@ class DiskWriter:
         writer.write_batch(_make_plugin_metrics_batch(rows))
         sink.flush()
 
+    def _flush_moe(self):
+        if not self._moe_buffer:
+            return
+
+        rows = self._moe_buffer
+        self._moe_buffer = []
+        self._all_moe_rows = self._all_moe_rows + rows
+
+        self._moe_rows_since_compaction += len(rows)
+        if (
+            "moe" in self._needs_compaction
+            or self._moe_rows_since_compaction >= self._config.compaction_every_n_steps
+        ):
+            self._needs_compaction.discard("moe")
+            self._close_stream(self._moe_stream)
+            self._moe_stream = self._reopen_compacted_stream(
+                self._moe_path(), MOE_SCHEMA, self._all_moe_rows, _make_moe_batch
+            )
+            self._moe_rows_since_compaction = 0
+            return
+
+        if self._moe_stream is None:
+            self._moe_stream = self._open_stream(self._moe_path(), MOE_SCHEMA)
+        sink, writer = self._moe_stream
+        writer.write_batch(_make_moe_batch(rows))
+        sink.flush()
+
     # --------------------------------------------------------------------- #
     # Batch builders
     # --------------------------------------------------------------------- #
@@ -686,6 +765,7 @@ class DiskWriter:
         for layer_name in list(self._layer_buffers.keys()):
             self._flush_layer(layer_name)
         self._flush_plugin_metrics()
+        self._flush_moe()
 
         self._write_manifest()
         logger.debug("Flushed writer for run %s", self._run_path.name)
@@ -705,4 +785,6 @@ class DiskWriter:
             self._layer_streams = {}
             self._close_stream(self._plugin_stream)
             self._plugin_stream = None
+            self._close_stream(self._moe_stream)
+            self._moe_stream = None
             self._closed = True

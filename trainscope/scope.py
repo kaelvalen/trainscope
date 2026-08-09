@@ -12,6 +12,7 @@ from torch.optim import Optimizer
 from trainscope.core.buffer import RollingBuffer
 from trainscope.core.config import TrainScopeConfig
 from trainscope.core.detectors import make_detector
+from trainscope.core.detectors.expert_utilization import ExpertUtilizationDriftDetector
 from trainscope.core.metrics import (
     compute_activation_metrics,
     compute_gradient_metrics,
@@ -96,6 +97,7 @@ class TrainScope:
 
         self._act_cache: dict[str, dict] = {}
         self._hooks: list[Any] = []
+        self._moe_cache: dict[str, list[float]] = {}
         self._step_idx = 0
         self._last_step_time: float | None = None
 
@@ -168,8 +170,52 @@ class TrainScope:
             h_fwd = module.register_forward_hook(make_forward_hook(name))
             self._hooks.append(h_fwd)
 
+        self._attach_moe_hooks()
+
         logger.info("TrainScope attached to %s", self._model.__class__.__name__)
         return self
+
+    def _attach_moe_hooks(self) -> None:
+        """Record per-expert routing share for Mixtral-style MoE models.
+
+        Any module whose parameter name contains ``router`` is treated as a
+        token-to-expert router. Its forward output is a logits tensor of shape
+        ``(..., n_experts)``; the share of tokens routed to each expert (by
+        argmax) is stored in ``self._moe_cache`` keyed by module name. If the
+        configured detector is ``expert_utilization_drift`` the cache feeds
+        it; otherwise the cache is still persisted to ``moe.arrow`` so the UI
+        can render utilization over time.
+        """
+        if not any("router" in n for n, _ in self._model.named_modules()):
+            return
+
+        router_names = [n for n, _ in self._model.named_modules() if "router" in n]
+        for name in router_names:
+            module = self._model.get_submodule(name)
+
+            def make_moe_hook(block_name: str):
+                def hook(_module, _input, output):
+                    tensor = None
+                    if isinstance(output, torch.Tensor):
+                        tensor = output
+                    elif isinstance(output, (tuple, list)):
+                        for item in output:
+                            if isinstance(item, torch.Tensor):
+                                tensor = item
+                                break
+                    if tensor is None or tensor.numel() == 0:
+                        return
+                    flat = tensor.detach().float().reshape(-1, tensor.shape[-1])
+                    argmax = flat.argmax(dim=-1)
+                    counts = torch.bincount(argmax, minlength=flat.shape[-1])
+                    shares = (counts / counts.sum()).tolist()
+                    self._moe_cache[block_name] = shares
+
+                return hook
+
+            self._hooks.append(module.register_forward_hook(make_moe_hook(name)))
+
+        logger.info("Attached MoE routing hooks for %d router(s)", len(router_names))
 
     def _compute_global_grad_norm(self) -> float:
         total_sq = 0.0
@@ -266,9 +312,21 @@ class TrainScope:
         if not math.isfinite(loss_f):
             # Do not poison the detector's baseline with NaN/Inf.
             score = None
+        elif isinstance(self._detector, ExpertUtilizationDriftDetector):
+            # Architecture-aware detector: consume the routing-concentration
+            # signal instead of the loss (see the v1.3.0 experiment).
+            max_share = max((max(v) for v in self._moe_cache.values()), default=0.0)
+            score = self._detector.update(max_share)
         else:
             score = self._detector.update(loss_f)
         is_spike = score is not None
+
+        # Persist per-block expert utilization (routing shares) for the UI.
+        for block_name, shares in self._moe_cache.items():
+            try:
+                self._writer.append_moe(step_idx, block_name, shares)
+            except Exception:
+                logger.exception("Failed to append MoE routing data for %s", block_name)
 
         should_histogram = step_idx % self._config.histogram_every_n_steps == 0 or is_spike
 

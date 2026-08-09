@@ -44,7 +44,7 @@ function validateApiResponse(path, data) {
     return
   }
 
-  const listEndpoints = ['/global', '/layers', '/spikes', '/layers/ranked', '/runs']
+  const listEndpoints = ['/global', '/layers', '/spikes', '/layers/ranked', '/runs', '/moe']
   const basePath = path.split('?')[0]
   if (listEndpoints.includes(basePath)) {
     if (!Array.isArray(data)) {
@@ -164,6 +164,10 @@ export async function fetchLayersRanked(topN = 8) {
 export async function fetchLayer(name) {
   if (!name) throw new ApiError('Layer name is required')
   return request(`/layers/${encodeURIComponent(name)}`)
+}
+
+export async function fetchMoe() {
+  return request('/moe')
 }
 
 export async function fetchSpikes() {

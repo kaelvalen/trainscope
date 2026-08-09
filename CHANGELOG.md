@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Architecture-aware diagnostics (Phase 2 body).** For Mixtral-style MoE models (any module named `router`), trainscope now records per-expert routing shares at every step and ships a detector for routing *concentration*:
+  - New Arrow stream `moe.arrow` (`MOE_SCHEMA`: `step`, `block`, `shares`) — additive file, old readers ignore it. Written by both `DiskWriter` and `RemoteWriter`; resume, compaction, and manifest support included.
+  - New detector `{"name": "expert_utilization_drift", ...}` joining CUSUM/z-score/percentile: consumes the step's max expert share (the scope feeds the routing signal instead of the loss when this detector is active) and reports when share ≥ `threshold` (default 0.85) for `run_steps` consecutive steps — the empirically verified v1.3.0 signal.
+  - New "Expert utilization" UI view: per-block per-expert share time series, concentration badges per block, and a warning card citing the 4–12 step empirical lead.
+  - `GET /api/moe` returns the active run's routing rows.
+
 ## [1.3.0] - Phase 2 Empirical Gate
 
 ### Added

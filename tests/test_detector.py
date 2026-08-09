@@ -419,3 +419,75 @@ class TestChangePointDetector:
         assert res == pytest.approx(expected)
         assert res < 0
         assert abs(res) < 6.0
+
+
+class TestExpertUtilizationDriftDetector:
+    def test_warmup_requires_min_observations(self):
+        from trainscope.core.detectors.expert_utilization import (
+            ExpertUtilizationDriftDetector,
+        )
+
+        det = ExpertUtilizationDriftDetector(min_observations=5)
+        assert det.warmup is True
+        for _ in range(4):
+            assert det.update(0.5) is None
+        assert det.warmup is True
+        # 5th observation exits warmup.
+        assert det.update(0.5) is None
+        assert det.warmup is False
+
+    def test_concentration_durable_across_run_steps_triggers(self):
+        from trainscope.core.detectors.expert_utilization import (
+            ExpertUtilizationDriftDetector,
+        )
+
+        det = ExpertUtilizationDriftDetector(threshold=0.85, min_observations=5, run_steps=3)
+        for _ in range(5):
+            det.update(0.5)
+        # Two consecutive high steps are not enough.
+        assert det.update(0.9) is None
+        assert det.update(0.9) is None
+        # Third consecutive high step triggers with the concentration score.
+        score = det.update(0.9)
+        assert score is not None
+        assert score == 0.9
+
+    def test_drop_below_threshold_resets_run(self):
+        from trainscope.core.detectors.expert_utilization import (
+            ExpertUtilizationDriftDetector,
+        )
+
+        det = ExpertUtilizationDriftDetector(threshold=0.85, min_observations=5, run_steps=3)
+        for _ in range(5):
+            det.update(0.5)
+        det.update(0.9)
+        det.update(0.9)
+        det.update(0.5)  # breaks the run
+        assert det.update(0.9) is None  # run restarted
+        assert det.update(0.9) is None
+        assert det.update(0.9) is not None
+
+    def test_no_false_positive_on_balanced_routing(self):
+        from trainscope.core.detectors.expert_utilization import (
+            ExpertUtilizationDriftDetector,
+        )
+
+        det = ExpertUtilizationDriftDetector(threshold=0.85, min_observations=5, run_steps=3)
+        triggers = 0
+        for _ in range(100):
+            # Top-2-of-4 healthy routing keeps max share around 0.4-0.6.
+            if det.update(0.5 + (_ % 3) * 0.05) is not None:
+                triggers += 1
+        assert triggers == 0
+
+    def test_factory_registers_detector(self):
+        from trainscope.core.config import TrainScopeConfig
+        from trainscope.core.detectors import make_detector
+        from trainscope.core.detectors.expert_utilization import (
+            ExpertUtilizationDriftDetector,
+        )
+
+        cfg = TrainScopeConfig(detector={"name": "expert_utilization_drift", "threshold": 0.9})
+        det = make_detector(cfg)
+        assert isinstance(det, ExpertUtilizationDriftDetector)
+        assert det.threshold == 0.9

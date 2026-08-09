@@ -5,6 +5,7 @@ import warnings
 import pytest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from trainscope import TrainScope, TrainScopeConfig
 from trainscope.io.writer import read_arrow_rows_sync
@@ -285,3 +286,127 @@ def test_optimizer_v_norm_zero_for_non_adam(tmp_path):
 
     rows = read_arrow_rows_sync(tmp_path / "scope_vnorm_sgd" / "global.arrow")
     assert rows[0]["optimizer_v_norm"] == 0.0
+
+
+class TestMoEIntegration:
+    """Mini MoE: routing shares are persisted and feed the drift detector."""
+
+    def _make_moe_model(self):
+        import torch.nn.functional as F
+
+        class Expert(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.net = nn.Sequential(nn.Linear(8, 16), nn.ReLU(), nn.Linear(16, 8))
+
+            def forward(self, x):
+                return self.net(x)
+
+        class MoEBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.router = nn.Linear(8, 4)
+                self.experts = nn.ModuleList([Expert() for _ in range(4)])
+
+            def forward(self, x):
+                logits = self.router(x)  # (..., 4)
+                probs = F.softmax(logits, dim=-1)
+                out = torch.zeros_like(x)
+                for i, expert in enumerate(self.experts):
+                    out = out + probs[..., i : i + 1] * expert(x)
+                return out
+
+        class MoEModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embed = nn.Linear(8, 8)
+                self.blocks = nn.ModuleList([MoEBlock(), MoEBlock()])
+                self.head = nn.Linear(8, 1)
+
+            def forward(self, x):
+                h = self.embed(x)
+                for block in self.blocks:
+                    h = block(h)
+                return self.head(h)
+
+        return MoEModel()
+
+    def test_moe_shares_written_to_arrow(self, tmp_path):
+
+        from trainscope.io.writer import read_arrow_rows_sync
+
+        model = self._make_moe_model()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path),
+            run_name="moe_run",
+            detector={"name": "expert_utilization_drift", "threshold": 0.85},
+            track_memory=False,
+        )
+        scope = TrainScope(model, optimizer, config).attach()
+
+        x = torch.randn(4, 8)
+        y = torch.randn(4, 1)
+        for _ in range(5):
+            optimizer.zero_grad()
+            loss = F.mse_loss(model(x), y)
+            loss.backward()
+            scope.step(loss.item(), batch_index=0)
+            optimizer.step()
+
+        scope.writer.flush()
+        scope.detach()
+
+        moe_path = tmp_path / "moe_run" / "moe.arrow"
+        assert moe_path.exists()
+        rows = read_arrow_rows_sync(moe_path)
+        assert len(rows) == 10  # 5 steps x 2 blocks
+        assert {r["block"] for r in rows} == {"blocks.0.router", "blocks.1.router"}
+        for row in rows:
+            assert len(row["shares"]) == 4
+            assert abs(sum(row["shares"]) - 1.0) < 1e-6
+
+    def test_detector_receives_max_share_not_loss(self, tmp_path):
+        """The expert detector consumes the routing signal, not the loss."""
+        from trainscope.core.detectors.expert_utilization import (
+            ExpertUtilizationDriftDetector,
+        )
+
+        model = self._make_moe_model()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path),
+            run_name="moe_detect",
+            detector={"name": "expert_utilization_drift", "threshold": 0.85, "min_observations": 3},
+            track_memory=False,
+        )
+        scope = TrainScope(model, optimizer, config).attach()
+        assert isinstance(scope._detector, ExpertUtilizationDriftDetector)
+
+        # Force concentration: a near-one-hot router output means max share
+        # approaches 1.0. Override the router weights directly.
+        for block in model.blocks:
+            with torch.no_grad():
+                block.router.weight.zero_()
+                block.router.weight[0, :] = 10.0
+                block.router.bias.zero_()
+
+        x = torch.randn(4, 8)
+        y = torch.randn(4, 1)
+        spike_steps = []
+        for step in range(10):
+            optimizer.zero_grad()
+            loss = F.mse_loss(model(x), y)
+            loss.backward()
+            spike = scope.step(loss.item(), batch_index=step)
+            optimizer.step()
+            if spike is not None:
+                spike_steps.append((step, spike["spike_score"]))
+
+        scope.detach()
+
+        # After warmup (3 obs), a consistently concentrated router must
+        # trigger the expert detector even though the loss is stable.
+        assert spike_steps, "expert detector never fired on concentrated routing"
+        _, first_score = spike_steps[0]
+        assert first_score >= 0.85
