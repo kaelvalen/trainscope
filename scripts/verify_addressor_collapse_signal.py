@@ -25,6 +25,22 @@ explosion_step.
 Explosion is defined objectively (loss > 10x baseline mean, or non-finite),
 independent of any detector, exactly as in the CUSUM/kurtosis/MoE claims.
 
+Threshold choice (why 0.6 and not MoE's 0.85): the threshold is not
+proportional to slot count but sits above the observed healthy ceiling of
+the max-share signal. With 16 soft-addressed slots the stable control's
+max-share peaks at 0.24-0.32 (measured below); 0.6 is a durable ~2x margin
+above that. The MoE experiment used 0.85 because its healthy control
+already peaks at 0.60-0.74 (top-2-of-4 routing naturally concentrates), so
+a lower threshold would not separate the conditions. Both thresholds are
+therefore "control max + margin", validated by running the control first.
+
+Dead-slot signal (measured, rejected): a slot whose mean addressing weight
+stays below 2% is NOT a collapse signal. With 16 slots such a slot exists
+in *every* step of both the stable control (140/140 steps, 3/3 seeds) and
+the LR-ramp condition (87-90/88-91) — identical to the MoE experiment's
+dead-expert finding. Only concentration (one slot dominating) separates
+the conditions, so only max-share is used for detection.
+
 Usage:
     python scripts/verify_addressor_collapse_signal.py [--seeds 1,7,42] [--data PATH]
 """
@@ -53,6 +69,9 @@ BASE_LR = 1e-3
 
 COLLAPSE_SHARE = 0.6
 COLLAPSE_RUN = 3
+# A slot whose mean addressing weight stays below this is "dead" (measured
+# and reported, but NOT used for detection — see the module docstring).
+DEAD_SHARE = 0.02
 
 DEFAULT_DATA = (
     "/home/kael/.cache/huggingface/datasets/Salesforce___wikitext/"
@@ -165,12 +184,13 @@ def make_batches(tokens, n_steps):
 
 
 def train(seed, vocab, tokens, scenario, n_steps=N_STEPS):
-    """Run one addressor training scenario; return (losses, max_share)."""
+    """Run one addressor scenario; return (losses, max_share, dead_slots)."""
     torch.manual_seed(seed)
     model = AddressorLM(vocab, D_MODEL, N_HEADS, N_SLOTS, D_FF)
     optimizer = torch.optim.AdamW(model.parameters(), lr=BASE_LR, weight_decay=0.0)
     losses: list[float] = []
     max_share: list[float] = []
+    dead_slots: list[bool] = []
 
     gen = make_batches(tokens, n_steps)
     for step in range(n_steps):
@@ -193,18 +213,21 @@ def train(seed, vocab, tokens, scenario, n_steps=N_STEPS):
         losses.append(loss.item())
         # Mean over tokens of each block's slot weights; keep the max share.
         per_block_max = []
+        per_block_min = []
         for w in weights:
             mean_w = w.reshape(-1, N_SLOTS).mean(dim=0)
             per_block_max.append(float(mean_w.max().item()))
+            per_block_min.append(float(mean_w.min().item()))
         max_share.append(max(per_block_max))
+        dead_slots.append(min(per_block_min) < DEAD_SHARE)
 
         if not torch.isfinite(loss):
             break
 
-    return losses, max_share
+    return losses, max_share, dead_slots
 
 
-def analyze(seed, scenario, losses, max_share):
+def analyze(seed, scenario, losses, max_share, dead_slots):
     base = np.array(losses[WARMUP - 40 : WARMUP])
     base_mean = float(base.mean())
 
@@ -226,6 +249,15 @@ def analyze(seed, scenario, losses, max_share):
             collapse = i - COLLAPSE_RUN + 1
             break
 
+    # Dead-slot diagnostic: first step (post-warmup) with a slot below the
+    # dead threshold. Measured but NOT used for detection — the experiment
+    # showed it fires in the stable control too (see module docstring).
+    dead_at = None
+    for i in range(WARMUP, limit):
+        if dead_slots[i]:
+            dead_at = i
+            break
+
     return {
         "seed": seed,
         "scenario": scenario,
@@ -235,6 +267,7 @@ def analyze(seed, scenario, losses, max_share):
         if (collapse is not None and explosion is not None)
         else None,
         "max_share_peak": float(np.nanmax(max_share[WARMUP:])) if WARMUP < len(max_share) else None,
+        "dead_slot_at": dead_at,
         "baseline": round(base_mean, 3),
     }
 
@@ -258,8 +291,8 @@ def main():
         print(f"\n=== scenario: {scenario} ===", flush=True)
         for seed in seeds:
             t0 = time.time()
-            losses, max_share = train(seed, vocab, tokens, scenario)
-            r = analyze(seed, scenario, losses, max_share)
+            losses, max_share, dead_slots = train(seed, vocab, tokens, scenario)
+            r = analyze(seed, scenario, losses, max_share, dead_slots)
             r["train_seconds"] = round(time.time() - t0, 1)
             results.append(r)
             print(r, flush=True)
