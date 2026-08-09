@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `scripts/verify_addressor_collapse_signal.py`: empirical check of the addressor-collapse claim (memory-augmented architecture sibling of the MoE experiment), on a mini memory-augmented transformer with 16 soft-addressed slots trained on wikitext-2. Result is **positive**: mean max-slot addressing share exceeded 0.6 durably 7–11 steps (mean 9.3) before loss divergence in 3/3 LR-ramp seeds, with zero collapses in 3/3 stable-control seeds (max share 0.24–0.32). Healthy runs use the memory bank diffusely; diverging runs lock onto one slot before the loss follows. VISION.md updated with the empirical status.
+- `scripts/verify_addressor_collapse_signal.py`: empirical check of the addressor-collapse claim (memory-augmented architecture sibling of the MoE experiment), on a mini memory-augmented transformer with 16 soft-addressed slots trained on wikitext-2. Result is **positive**: mean max-slot addressing share exceeded 0.6 durably 7–11 steps (mean 9.3) before loss divergence in 3/3 LR-ramp seeds, with zero collapses in 3/3 stable-control seeds (max share 0.24–0.32). Methodology notes documented in the script: the 0.6 threshold is "control max + margin" (measured healthy ceiling 0.32; MoE's 0.85 sat above its control's 0.74 — both validated by running the control first), and the dead-slot signal was measured and rejected (a slot below 2% mean weight exists in every step of both conditions, mirroring MoE's dead-expert finding). VISION.md updated with the empirical status.
 
 ## [1.4.0] - Architecture-Aware Diagnostics
 

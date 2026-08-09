@@ -88,14 +88,21 @@ transformer, 16 soft-addressed slots, wikitext-2). Result is **positive**:
   7–11 steps (mean 9.3) before the loss exploded, in 3/3 seeds; the stable
   control produced zero collapses in 3/3 seeds (max share 0.24–0.32 — the
   model keeps using the bank diffusely).
-- Concentration magnitude matches the MoE finding: healthy runs spread
-  addressing across the bank, diverging runs lock onto one slot before the
-  loss follows.
+- **Threshold rationale**: 0.6 is not proportional to slot count; it sits
+  ~2x above the measured healthy ceiling of the signal (control max share
+  0.32), exactly like MoE's 0.85 sat above its control's 0.74. Both
+  thresholds follow "control max + margin", validated by running the
+  control first.
+- **Dead-slot signal rejected (measured, not assumed)**: a slot staying
+  below 2% mean weight occurs in *every* step of both conditions (140/140
+  stable, 87–90/88–91 ramp steps) — 16 slots make one slot near-idle
+  structurally. Same finding as MoE's dead-expert: abandonment is normal,
+  concentration is the signal.
 
 This is the second architecture-class signal verified with the same
 methodology. If and when addressor-aware diagnostics are built, they should
 key on slot-share concentration (like the MoE detector), not on unused
-slots — the MoE experiment already showed abandonment is normal behavior.
+slots.
 
 ### Phase 3 — "Can trainscope defend itself?"
 
