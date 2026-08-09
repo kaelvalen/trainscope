@@ -199,6 +199,13 @@ export async function fetchRuns() {
   return request('/runs')
 }
 
+export async function fetchCompare(runNames) {
+  if (!Array.isArray(runNames) || runNames.length < 2) {
+    throw new ApiError('At least two run names are required for comparison')
+  }
+  return request(`/compare?runs=${encodeURIComponent(runNames.join(','))}`)
+}
+
 export async function selectRun(name) {
   if (!name) throw new ApiError('Run name is required')
   return request('/runs/select', {

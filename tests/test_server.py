@@ -501,3 +501,131 @@ class TestMultiRun:
     def test_select_mismatch_in_single_run_mode(self, client):
         resp = client.post("/api/runs/select", json={"name": "other"})
         assert resp.status_code == 400
+
+
+class TestCompare:
+    def _make_root(self, tmp_path):
+        root = tmp_path / "cmp_root"
+        root.mkdir()
+        return root
+
+    def _write_run(self, path, rows, meta=None):
+        path.mkdir(parents=True, exist_ok=True)
+        path.joinpath("meta.json").write_text(
+            json.dumps(
+                meta
+                or {
+                    "model_name": "M",
+                    "model_config": {"d_model": 128},
+                    "trainscope_config": {"run_name": path.name, "full_resolution_window": 500},
+                }
+            )
+        )
+        _write_arrow(path / "global.arrow", GLOBAL_SCHEMA, rows)
+        path.joinpath("manifest.json").write_text(
+            json.dumps({"last_step": rows[-1]["step"], "n_global_rows": len(rows)})
+        )
+
+    def _row(self, step, loss, is_spike=False):
+        return {
+            "step": step,
+            "loss": loss,
+            "grad_norm_before_clip": 1.0,
+            "grad_norm_after_clip": 1.0,
+            "lr": 0.001,
+            "optimizer_v_norm": 0.0,
+            "step_time_ms": 1.0,
+            "batch_index": step,
+            "is_spike": is_spike,
+            "cpu_memory_mb": 0.0,
+            "cuda_memory_mb": 0.0,
+        }
+
+    def test_compare_requires_multi_run_mode(self, client):
+        r = client.get("/api/compare", params={"runs": "a,b"})
+        assert r.status_code == 404
+
+    def test_compare_finds_divergence_and_config_diff(self, tmp_path):
+        root = self._make_root(tmp_path)
+        # Run A: flat 1.0 loss the whole way. Run B: same until step 40, then
+        # drifts upward — a durable separation after a shared warmup.
+        rows_a = [self._row(i, 1.0) for i in range(80)]
+        rows_b = [self._row(i, 1.0) for i in range(40)] + [
+            self._row(i, 1.0 + 0.05 * (i - 39)) for i in range(40, 80)
+        ]
+        self._write_run(root / "run_a", rows_a)
+        self._write_run(
+            root / "run_b",
+            rows_b,
+            meta={
+                "model_name": "M",
+                "model_config": {"d_model": 256},  # differs from run_a's 128
+                "trainscope_config": {
+                    "run_name": "run_b",
+                    "full_resolution_window": 1000,  # differs
+                },
+            },
+        )
+
+        client = TestClient(create_app(str(root / "run_a"), runs_root=str(root)))
+        r = client.get("/api/compare", params={"runs": "run_a,run_b"})
+        assert r.status_code == 200
+        data = r.json()
+
+        assert data["runs"] == ["run_a", "run_b"]
+        assert data["divergence"]["step"] == 40
+        assert data["divergence"]["min_run"] == 3
+
+        fields = {d["field"]: d["values"] for d in data["config_diff"]}
+        assert fields["config.full_resolution_window"] == {"run_a": 500, "run_b": 1000}
+        assert fields["model.d_model"] == {"run_a": 128, "run_b": 256}
+        # Identical fields are not reported.
+        assert all("run_name" not in f for f in fields)
+
+    def test_compare_common_cause_threshold(self, tmp_path):
+        root = self._make_root(tmp_path)
+        # Two runs with spikes share lr=0.001; one stable run has lr=0.0001.
+        for name, lr, spike in [
+            ("spike_a", 0.001, True),
+            ("spike_b", 0.001, True),
+            ("ok_c", 0.0001, False),
+        ]:
+            rows = [self._row(i, 1.0, is_spike=spike and i == 30) for i in range(60)]
+            self._write_run(
+                root / name,
+                rows,
+                meta={
+                    "model_name": "M",
+                    "model_config": {},
+                    "trainscope_config": {
+                        "run_name": name,
+                        "full_resolution_window": 500,
+                        "detector": {"name": "changepoint", "threshold": lr},
+                    },
+                },
+            )
+            if spike:
+                spikes = root / name / "spikes"
+                spikes.mkdir()
+                _write_arrow(spikes / "spike_step_30.arrow", GLOBAL_SCHEMA, [rows[30]])
+        client = TestClient(create_app(str(root / "spike_a"), runs_root=str(root)))
+        data = client.get("/api/compare", params={"runs": "spike_a,spike_b,ok_c"}).json()
+        causes = {c["field"]: c for c in data["common_cause"]}
+        assert "config.detector.threshold" in causes
+        cause = causes["config.detector.threshold"]
+        assert cause["spiked_value"] == 0.001
+        assert cause["stable_value"] == 0.0001
+
+    def test_compare_missing_run_404(self, tmp_path):
+        root = self._make_root(tmp_path)
+        self._write_run(root / "run_a", [self._row(i, 1.0) for i in range(20)])
+        client = TestClient(create_app(str(root / "run_a"), runs_root=str(root)))
+        r = client.get("/api/compare", params={"runs": "run_a,ghost"})
+        assert r.status_code == 404
+
+    def test_compare_requires_two_runs(self, tmp_path):
+        root = self._make_root(tmp_path)
+        self._write_run(root / "run_a", [self._row(i, 1.0) for i in range(20)])
+        client = TestClient(create_app(str(root / "run_a"), runs_root=str(root)))
+        r = client.get("/api/compare", params={"runs": "run_a"})
+        assert r.status_code == 400
