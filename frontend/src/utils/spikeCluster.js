@@ -3,7 +3,7 @@ import { CHART_COLORS } from '../theme.js'
 /**
  * Group raw spike detection triggers into coherent spike events / anomaly cascades.
  *
- * @param {Array} globalData - Array of global step row objects { step, loss, is_spike, z_score, ... }
+ * @param {Array} globalData - Array of global step row objects { step, loss, is_spike, spike_score, ... }
  * @param {Array} spikeList - Fallback array of spike objects { step: N } if globalData is not ready
  * @param {number} maxGap - Maximum gap between consecutive detection steps to merge into a single event (default: 5)
  * @returns {Array<SpikeEvent>} Array of clustered spike events
@@ -17,7 +17,7 @@ export function groupSpikes(globalData = [], spikeList = [], maxGap = 5) {
       .map((r) => ({
         step: r.step,
         loss: r.loss ?? null,
-        zScore: r.z_score ?? null,
+        zScore: r.spike_score ?? null,
       }))
   } else if (Array.isArray(spikeList) && spikeList.length > 0) {
     items = spikeList.map((s) => ({

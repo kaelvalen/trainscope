@@ -1,9 +1,5 @@
-import { useState } from 'react'
+import { Suspense, lazy, useState } from 'react'
 import { useRun } from './RunContext.jsx'
-import Timeline from './views/Timeline.jsx'
-import LayerDrilldown from './views/LayerDrilldown.jsx'
-import DiffView from './views/DiffView.jsx'
-import SpikeInspector from './views/SpikeInspector.jsx'
 import ErrorMessage from './components/ErrorMessage.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
 import { Navbar } from './components/ui/Navbar.jsx'
@@ -12,6 +8,11 @@ import { Skeleton } from './components/ui/Skeleton.jsx'
 import { PageHeader } from './components/ui/PageHeader.jsx'
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js'
 import { NAV_ITEMS } from './navigation.js'
+
+const Timeline = lazy(() => import('./views/Timeline.jsx'))
+const LayerDrilldown = lazy(() => import('./views/LayerDrilldown.jsx'))
+const DiffView = lazy(() => import('./views/DiffView.jsx'))
+const SpikeInspector = lazy(() => import('./views/SpikeInspector.jsx'))
 
 const VIEW_COMPONENTS = {
   timeline: Timeline,
@@ -91,7 +92,16 @@ export default function App() {
             {!loading && error && <ErrorMessage message={error} onRetry={refresh} />}
             {!loading && !error && isReady && (
               <ErrorBoundary>
-                <ActiveComponent />
+                <Suspense
+                  fallback={
+                    <div className="space-y-4">
+                      <Skeleton className="h-40" />
+                      <Skeleton className="h-80" />
+                    </div>
+                  }
+                >
+                  <ActiveComponent />
+                </Suspense>
               </ErrorBoundary>
             )}
           </div>

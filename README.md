@@ -22,6 +22,7 @@ pip install trainscope
 - [Command-line interface](#command-line-interface)
 - [Configuration](#configuration)
 - [Storage layout](#storage-layout)
+- [Stability scope](#stability-scope)
 - [Overhead](#overhead)
 - [Development](#development)
 - [Publishing](#publishing)
@@ -31,7 +32,7 @@ pip install trainscope
 
 Loss spikes in large language model training are expensive. Existing tools log aggregates; trainscope logs the *mechanism*:
 
-- **CUSUM Change-Point Detection**: Catches subtle, persistent loss drifts ($0.10\sigma - 0.25\sigma$) 5–10 steps before loss explodes.
+- **CUSUM Change-Point Detection**: Catches subtle, persistent loss drifts ($0.10\sigma - 0.25\sigma$ per step). Verified on real training: in an organic mini-GPT-2/wikitext-2 loss explosion, CUSUM fired 9–11 steps (mean 9.7) before the loss diverged (see `scripts/verify_cusum_early_warning.py`).
 - **Activation kurtosis**: Rises 1–5 steps before catastrophic loss explosion.
 - **Chronological Spike Story Cascade**: Traces failure cascades chronologically (`Loss Shift` → `Gradient Explosion` → `NaN Collapse`) to isolate root causes instead of terminal symptoms.
 - **Gradient L2 norms**: Per-layer breakdowns show exactly which transformer block initiated the update instability.
@@ -39,7 +40,7 @@ Loss spikes in large language model training are expensive. Existing tools log a
 - **Weight histograms + KL divergence**: Compare parameter distributions before and after the spike.
 - **RNG state + optional checkpoint**: At the spike step for exact replay.
 
-All data is written to local Arrow files; the UI is a lightweight standalone FastAPI server with Plotly code-splitting (<150KB initial JS load) and incremental WebSocket live streaming.
+All data is written to local Arrow files; the UI is a lightweight standalone FastAPI server with lazy-loaded views and Plotly (initial shell ~60KB gzipped; the 4.9MB Plotly bundle is fetched only when the first chart renders) and incremental WebSocket live streaming.
 
 ## Quick start
 
@@ -165,7 +166,6 @@ for batch in loader:
 TrainScopeConfig(
     run_dir="./trainscope_runs",            # output root
     run_name=None,                          # defaults to run_YYYYMMDD_HHMMSS
-    spike_threshold=3.5,                    # z-score threshold (rolling baseline)
     full_resolution_window=500,             # last N steps at full resolution
     decimation_factor=10,                   # older steps: keep every Nth
     spike_window_before=50,                 # steps before spike to save
@@ -187,6 +187,7 @@ TrainScopeConfig(
 ### Notable options
 
 - **`device`** — `None` computes metrics on CPU to avoid GPU synchronization; set to `"cuda"` to force GPU.
+- **`detector`** — Selects the anomaly detector: `detector="changepoint"` (default, CUSUM) or `detector={"name": "z_score", "threshold": 3.5}` for the rolling z-score. Detector thresholds live inside this dict — there is no top-level `spike_threshold` since 1.0, because each detector's threshold is on a different scale (CUSUM's cumulative-sum decision threshold vs. a raw z-score cutoff).
 - **`checkpoint_on_spike`** — Save `model.state_dict()` (and optimizer state if available) on spike. `True` writes `checkpoints/{step}.pt`; a string is a `{step}` path template.
 - **`rng_every_n_steps`** — Save RNG state periodically in addition to spike steps.
 - **`resume`** — Append to existing Arrow files instead of overwriting.
@@ -206,6 +207,18 @@ trainscope_runs/<run-name>/
 ```
 
 Estimated storage: ~10 MB/step at full resolution for a 1B-parameter model. The default 500-step rolling window caps typical retention at ~5 GB. Spike windows are small.
+
+## Stability scope
+
+Starting with 1.0.0, trainscope follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with a *defined surface*:
+
+- **Python API (stable contract)** — `TrainScope`, `TrainScopeConfig`, `load_config`, `StopTraining`, and the `trainscope.*` import paths. Breaking changes to these (renames, removed parameters, changed semantics) only land in major releases. `StopTraining.spike_score` is the canonical attribute; `z_score` remains as a deprecated alias.
+- **Config surface (stable contract)** — All `TrainScopeConfig` fields, their defaults, and the `TRAINSCOPE_*` / YAML / JSON loading conventions. Detector thresholds are configured per-detector (e.g. `detector={"name": "z_score", "threshold": 3.5}`); there is no top-level `spike_threshold` since 1.0.
+- **Arrow file format (additive only within a major version)** — `global.arrow`, layer and spike-window files, and `meta.json`/`manifest.json`. Adding a new nullable field is a minor release; removing a field or changing an existing field's type or semantics requires a major release. Writers may add columns; readers must tolerate columns they do not know about. Plugins already get their own table (`PLUGIN_METRICS_SCHEMA`), so new metric surfaces should extend that rather than reshuffle the core schema.
+- **HTTP/WebSocket API (not a public contract)** — The `/api/*` endpoints and `/ws` WebSocket are implementation details of the bundled UI. They are versioned implicitly by the trainscope release and may change shape in minor releases; do not build external clients against them. The [browser UI](#browser-ui) is the only supported consumer.
+- **Plugins** — Detector plugins must subclass `AnomalyDetector`; metric plugins follow the plugin-metrics table. Beyond that, plugin interfaces are not yet a frozen contract.
+
+Anything not listed here (integration helper details, CLI output formatting) is considered internal.
 
 ## Overhead
 

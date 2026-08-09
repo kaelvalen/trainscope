@@ -70,12 +70,6 @@ def _coerce_value(field_name: str, raw: str) -> Any:
     if field_name in int_fields:
         return int(raw)
 
-    float_fields = {
-        "spike_threshold",
-    }
-    if field_name in float_fields:
-        return float(raw)
-
     # Fallback to string.
     return raw
 
@@ -88,7 +82,6 @@ class TrainScopeConfig:
     # Older steps are decimated (kept every `decimation_factor`-th step).
     full_resolution_window: int = 500
     decimation_factor: int = 10
-    spike_threshold: float = 3.5
     # spike_window_before must be <= full_resolution_window. If equal, the full
     # spike window fits into the full-resolution buffer.
     spike_window_before: int = 50
@@ -188,11 +181,10 @@ class TrainScopeConfig:
         if isinstance(self.detector, str):
             self.detector = {"name": self.detector}
         if self.detector is None:
-            # CUSUM's threshold ("h", decision threshold for the cumulative
-            # sum) is on a different scale than spike_threshold (a raw
-            # z-score cutoff, used by the z_score detector). Do not inject
-            # spike_threshold here; let ChangePointDetector use its own
-            # validated default.
+            # Each detector scales its own decision threshold; CUSUM's "h"
+            # (cumulative-sum decision threshold) lives on a different scale
+            # than the z_score detector's raw z-score cutoff, so detectors get
+            # their own validated defaults instead of a shared threshold.
             self.detector = {"name": "changepoint"}
         if not isinstance(self.detector, dict) or "name" not in self.detector:
             raise ValueError("detector must be a detector name or a dict with a 'name' key")
@@ -216,7 +208,6 @@ class TrainScopeConfig:
             "run_name": self.run_name,
             "full_resolution_window": self.full_resolution_window,
             "decimation_factor": self.decimation_factor,
-            "spike_threshold": self.spike_threshold,
             "spike_window_before": self.spike_window_before,
             "spike_window_after": self.spike_window_after,
             "n_histogram_bins": self.n_histogram_bins,
@@ -262,6 +253,12 @@ class TrainScopeConfig:
             if not key.startswith(prefix) or key == f"{prefix}PROFILE":
                 continue
             field_name = key[len(prefix) :].lower()
+            if field_name == "spike_threshold":
+                raise ValueError(
+                    f"{prefix}SPIKE_THRESHOLD was removed in 1.0. Configure the detector "
+                    "threshold instead, e.g. "
+                    f'{prefix}DETECTOR=\'{{"name": "z_score", "threshold": 3.5}}\''
+                )
             if field_name not in field_names:
                 continue
             overrides[field_name] = _coerce_value(field_name, value)
@@ -295,4 +292,11 @@ def load_config(path_or_dict: str | Path | dict[str, Any] | TrainScopeConfig) ->
     profile_name = data.pop("profile", None)
     base = PRESETS.get(profile_name, PRESETS["default"])() if profile_name else {}
     merged = {**base, **data}
+
+    if "spike_threshold" in merged:
+        raise ValueError(
+            "spike_threshold was removed in 1.0. Configure the detector threshold "
+            "instead, e.g. detector={'name': 'z_score', 'threshold': 3.5}."
+        )
+
     return TrainScopeConfig(**merged)
