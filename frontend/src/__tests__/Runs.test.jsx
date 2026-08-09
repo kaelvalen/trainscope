@@ -91,8 +91,7 @@ describe('Runs view', () => {
     expect(screen.getAllByText('3.2000').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('2.1000').length).toBeGreaterThanOrEqual(1)
     // Spike counts render per row.
-    expect(screen.getByText('2', { selector: 'span.font-mono' })).toBeInTheDocument()
-    expect(screen.getByText('0', { selector: 'span.font-mono' })).toBeInTheDocument()
+    expect(screen.getByText('2 spikes')).toBeInTheDocument()
   })
 
   it('switches to the selected run via POST /api/runs/select', async () => {
@@ -125,7 +124,70 @@ describe('Runs view', () => {
     )
 
     await waitFor(() => expect(screen.getByText('run_b')).toBeInTheDocument())
-    fireEvent.click(screen.getByText('run_b'))
+    const openButtons = screen.getAllByRole('button', { name: 'Open' })
+    fireEvent.click(openButtons[0]) // newest run (run_b) sorts first
     await waitFor(() => expect(selectBody).toEqual({ name: 'run_b' }))
+  })
+
+  it('compares selected runs and shows divergence and common cause', async () => {
+    globalThis.fetch = vi.fn(async (url, options) => {
+      const path = new URL(url, window.location.origin).pathname
+      if (path === '/api/compare') {
+        return {
+          ok: true,
+          json: async () => ({
+            runs: ['run_a', 'run_b'],
+            summaries: RUNS,
+            loss_series: {
+              run_a: [
+                { step: 0, loss: 1.0 },
+                { step: 1, loss: 1.0 },
+              ],
+              run_b: [
+                { step: 0, loss: 1.0 },
+                { step: 1, loss: 2.0 },
+              ],
+            },
+            divergence: { step: 1, baseline_gap: 0.0, threshold: 1e-6, min_run: 1 },
+            config_diff: [
+              { field: 'config.full_resolution_window', values: { run_a: 500, run_b: 1000 } },
+            ],
+            common_cause: [
+              { field: 'config.detector.threshold', spiked_value: 6.0, stable_value: 3.5 },
+            ],
+          }),
+        }
+      }
+      const payload = {
+        '/api/meta': { model_name: 'MiniGPT', trainscope_config: { run_name: 'run_a' } },
+        '/api/global': [],
+        '/api/layers': [],
+        '/api/spikes': [],
+        '/api/runs': RUNS,
+      }[path]
+      return { ok: true, json: async () => payload }
+    })
+
+    render(
+      <ToastProvider>
+        <RunProvider>
+          <Runs />
+        </RunProvider>
+      </ToastProvider>
+    )
+
+    await waitFor(() => expect(screen.getByText('run_a')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Select run run_a'))
+    fireEvent.click(screen.getByLabelText('Select run run_b'))
+    fireEvent.click(screen.getByRole('button', { name: 'Compare (2)' }))
+
+    await waitFor(() => expect(screen.getByText('Loss curves')).toBeInTheDocument())
+    expect(screen.getByText('Step 1')).toBeInTheDocument()
+    expect(screen.getByText('Common cause')).toBeInTheDocument()
+    expect(
+      screen.getByText((content) => content.includes('every run with spikes has'))
+    ).toBeInTheDocument()
+    expect(screen.getByText('config.full_resolution_window')).toBeInTheDocument()
+    expect(screen.getByText('1000')).toBeInTheDocument()
   })
 })

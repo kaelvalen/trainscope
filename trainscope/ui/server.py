@@ -177,6 +177,10 @@ class SelectRunParams(BaseModel):
     name: str = Field(..., min_length=1, description="Run directory name to activate")
 
 
+class CompareParams(BaseModel):
+    runs: str = Field(..., description="Comma-separated run directory names to compare")
+
+
 def _discover_run_dirs(root: Path) -> list[Path]:
     """Return run directories under ``root`` (sorted, deterministic)."""
     if not root.exists() or not root.is_dir():
@@ -311,6 +315,171 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         _cache.clear()
         logger.info("Switched active run to: %s", rp)
         return await _read_run_summary(rp)
+
+    def _flatten_config(meta: dict[str, Any]) -> dict[str, Any]:
+        """Flatten trainscope_config + model_config into dot-path scalar fields."""
+        flat: dict[str, Any] = {}
+
+        def walk(prefix: str, value: Any) -> None:
+            if isinstance(value, dict):
+                for key, sub in value.items():
+                    walk(f"{prefix}.{key}" if prefix else key, sub)
+            elif isinstance(value, (str, int, float, bool)) or value is None:
+                flat[prefix] = value
+
+        tc = meta.get("trainscope_config") or {}
+        mc = meta.get("model_config") or {}
+        # run_name/run_dir are per-run identities, not comparison dimensions.
+        walk("config", {k: v for k, v in tc.items() if k not in {"run_name", "run_dir"}})
+        walk("model", mc)
+        return flat
+
+    async def _find_divergence_step(
+        series: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, Any] | None:
+        """First step where the selected runs' loss curves durably separate.
+
+        Uses the median pairwise loss gap over a warmup prefix as baseline and
+        requires the gap to exceed 3x that baseline for ``min_run`` consecutive
+        steps, so a single noisy step cannot trigger a false divergence.
+        """
+        steps_by_run = [{(row["step"]) for row in rows} for rows in series.values()]
+        if not steps_by_run:
+            return None
+        common_steps = sorted(set.intersection(*steps_by_run))
+        if len(common_steps) < 10:
+            return None
+
+        warmup_len = min(20, max(1, len(common_steps) // 5))
+        warmup = common_steps[:warmup_len]
+        step_index = {step: i for i, step in enumerate(common_steps)}
+
+        loss_at: dict[str, list[float | None]] = {}
+        for name, rows in series.items():
+            by_step = {row["step"]: row.get("loss") for row in rows}
+            loss_at[name] = [by_step.get(step) for step in common_steps]
+
+        names = list(series.keys())
+        baseline_gaps: list[float] = []
+        for step in warmup:
+            values = [loss_at[n][step_index[step]] for n in names]
+            finite = [v for v in values if v is not None and math.isfinite(v)]
+            if len(finite) >= 2:
+                baseline_gaps.append(max(finite) - min(finite))
+        if not baseline_gaps:
+            return None
+        baseline = sorted(baseline_gaps)[len(baseline_gaps) // 2]  # median
+        threshold = max(3.0 * baseline, 1e-6)
+
+        min_run = 3
+        run_count = 0
+        for step in common_steps[warmup_len:]:
+            values = [loss_at[n][step_index[step]] for n in names]
+            finite = [v for v in values if v is not None and math.isfinite(v)]
+            if len(finite) >= 2 and (max(finite) - min(finite)) > threshold:
+                run_count += 1
+            else:
+                run_count = 0
+            if run_count >= min_run:
+                step = common_steps[common_steps.index(step) - min_run + 1]
+                return {
+                    "step": step,
+                    "baseline_gap": baseline,
+                    "threshold": threshold,
+                    "min_run": min_run,
+                }
+        return None
+
+    @app.get("/api/compare")
+    async def get_compare(
+        params: Annotated[CompareParams, Depends()],
+    ) -> dict[str, Any]:
+        """Compare loss curves, config, and common causes across runs.
+
+        Multi-run mode only (a single-run server has nothing to compare).
+        Returns per-run loss series (optionally decimated), the first step at
+        which the curves durably diverge, config fields that differ between
+        runs, and a text summary of shared traits among runs with spikes.
+        """
+        if not multi_run:
+            raise HTTPException(
+                status_code=404,
+                detail="Comparison requires multi-run mode (--runs)",
+            )
+        assert rr is not None
+        names = [n.strip() for n in params.runs.split(",") if n.strip()]
+        if len(names) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Select at least two runs to compare",
+            )
+
+        by_name = {d.name: d for d in _discover_run_dirs(rr)}
+        missing = [n for n in names if n not in by_name]
+        if missing:
+            raise HTTPException(status_code=404, detail=f"Run(s) not found: {', '.join(missing)}")
+
+        summaries = await asyncio.gather(*(_read_run_summary(by_name[n]) for n in names))
+        meta_by_name = {
+            n: (await _read_json_optional(by_name[n] / "meta.json")) or {} for n in names
+        }
+
+        # Loss series per run, decimated so large runs stay cheap to plot.
+        max_points = 2000
+        series: dict[str, list[dict[str, Any]]] = {}
+        for n in names:
+            rows = await _read_arrow(by_name[n] / "global.arrow")
+            if len(rows) > max_points:
+                stride = len(rows) / max_points
+                rows = [r for i, r in enumerate(rows) if i % max(1, int(stride)) == 0]
+            series[n] = [{"step": r["step"], "loss": r.get("loss")} for r in rows]
+
+        divergence = await _find_divergence_step(series)
+
+        # Config diff: fields whose value differs across the selected runs.
+        flat_by_name = {n: _flatten_config(meta_by_name[n]) for n in names}
+        all_keys = sorted({k for f in flat_by_name.values() for k in f})
+        differing = [
+            {"field": k, "values": {n: flat_by_name[n].get(k) for n in names}}
+            for k in all_keys
+            if len({flat_by_name[n].get(k) for n in names}) > 1
+        ]
+
+        # Common cause: shared trait of spiked runs absent from stable runs.
+        common_cause: list[dict[str, Any]] = []
+        spiked = [n for n in names if (summaries[names.index(n)].get("spike_count") or 0) > 0]
+        stable = [n for n in names if n not in spiked]
+        if spiked and stable:
+            for entry in differing:
+                k = cast(str, entry["field"])
+                spiked_values = {flat_by_name[n].get(k) for n in spiked}
+                stable_values = {flat_by_name[n].get(k) for n in stable}
+                # Only report numeric thresholds and boolean flags; names and
+                # free-text fields are noise.
+                if not all(
+                    isinstance(v, (int, float, bool)) for v in spiked_values | stable_values
+                ):
+                    continue
+                if spiked_values == stable_values:
+                    continue
+                common_cause.append(
+                    {
+                        "field": k,
+                        "spiked_value": next(iter(spiked_values)),
+                        "stable_value": next(iter(stable_values)),
+                    }
+                )
+                if len(common_cause) >= 5:
+                    break
+
+        return {
+            "runs": [s["name"] for s in summaries],
+            "summaries": summaries,
+            "loss_series": series,
+            "divergence": divergence,
+            "config_diff": differing,
+            "common_cause": common_cause,
+        }
 
     @app.get("/api/manifest")
     async def manifest() -> Any:

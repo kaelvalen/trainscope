@@ -136,7 +136,9 @@ trainscope ui --run ./trainscope_runs/run_20250516_143022 \
 
 # Open UI for every run under a root directory (multi-run mode):
 # the Runs view lists all runs side by side with last loss and spike
-# count; selecting one switches every other view to it.
+# count; selecting one switches every other view to it. Check two or
+# more runs to compare loss curves (with an automatic divergence
+# point), config differences, and shared causes among spiked runs.
 trainscope ui --runs ./trainscope_runs
 
 # Print version
