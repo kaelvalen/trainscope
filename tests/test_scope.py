@@ -410,3 +410,122 @@ class TestMoEIntegration:
         assert spike_steps, "expert detector never fired on concentrated routing"
         _, first_score = spike_steps[0]
         assert first_score >= 0.85
+
+
+class TestAddressorIntegration:
+    """Mini memory-augmented model: slot shares feed the addressor detector."""
+
+    def _make_addressor_model(self):
+        class MemoryBank(nn.Module):
+            def __init__(self, n_slots):
+                super().__init__()
+                self.slots = nn.Parameter(torch.randn(n_slots, 8) * 0.1)
+
+            def read(self, weights):
+                return torch.einsum("...s,sd->...d", weights, self.slots)
+
+        class AddressorBlock(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.mlp = nn.Sequential(nn.Linear(8, 16), nn.ReLU(), nn.Linear(16, 8))
+                self.addressor = nn.Linear(8, 16)  # 16 memory slots
+                self.memory = MemoryBank(16)
+
+            def forward(self, x):
+                x = x + self.mlp(x)
+                weights = F.softmax(self.addressor(x), dim=-1)
+                return x + self.memory.read(weights)
+
+        class MemoryModel(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embed = nn.Linear(8, 8)
+                self.blocks = nn.ModuleList([AddressorBlock(), AddressorBlock()])
+                self.head = nn.Linear(8, 1)
+
+            def forward(self, x):
+                h = self.embed(x)
+                for block in self.blocks:
+                    h = block(h)
+                return self.head(h)
+
+        return MemoryModel()
+
+    def test_addressor_shares_written_to_arrow(self, tmp_path):
+        from trainscope.io.writer import read_arrow_rows_sync
+
+        model = self._make_addressor_model()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path),
+            run_name="mem_run",
+            detector={"name": "addressor_concentration_drift"},
+            track_memory=False,
+        )
+        scope = TrainScope(model, optimizer, config).attach()
+
+        x = torch.randn(4, 8)
+        y = torch.randn(4, 1)
+        for _ in range(5):
+            optimizer.zero_grad()
+            loss = F.mse_loss(model(x), y)
+            loss.backward()
+            scope.step(loss.item(), batch_index=0)
+            optimizer.step()
+
+        scope.writer.flush()
+        scope.detach()
+
+        moe_path = tmp_path / "mem_run" / "moe.arrow"
+        assert moe_path.exists()
+        rows = read_arrow_rows_sync(moe_path)
+        assert len(rows) == 10  # 5 steps x 2 blocks
+        blocks = {r["block"] for r in rows}
+        assert blocks == {"blocks.0.addressor", "blocks.1.addressor"}
+        for row in rows:
+            assert len(row["shares"]) == 16
+            assert abs(sum(row["shares"]) - 1.0) < 1e-6
+
+    def test_addressor_detector_fires_on_concentration(self, tmp_path):
+        from trainscope.core.detectors.addressor_concentration import (
+            AddressorConcentrationDriftDetector,
+        )
+
+        model = self._make_addressor_model()
+        optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path),
+            run_name="mem_detect",
+            detector={"name": "addressor_concentration_drift", "min_observations": 3},
+            track_memory=False,
+        )
+        scope = TrainScope(model, optimizer, config).attach()
+        assert isinstance(scope._detector, AddressorConcentrationDriftDetector)
+
+        # Force concentration: addressor biases push all tokens to slot 0.
+        # A large bias guarantees slot-0 dominance regardless of the sign of
+        # the (random) input features — weight-only manipulation leaves ~half
+        # of tokens with a negative slot-0 logit.
+        for block in model.blocks:
+            with torch.no_grad():
+                block.addressor.weight.zero_()
+                block.addressor.bias.zero_()
+                block.addressor.bias[0] = 50.0
+
+        x = torch.randn(4, 8)
+        y = torch.randn(4, 1)
+        spike_steps = []
+        for step in range(10):
+            optimizer.zero_grad()
+            loss = F.mse_loss(model(x), y)
+            loss.backward()
+            spike = scope.step(loss.item(), batch_index=step)
+            optimizer.step()
+            if spike is not None:
+                spike_steps.append((step, spike["spike_score"]))
+
+        scope.detach()
+
+        assert spike_steps, "addressor detector never fired on concentrated addressing"
+        _, first_score = spike_steps[0]
+        assert first_score >= 0.6

@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Addressor-concentration drift detector (Phase 2, memory-augmented).** The v1.4.1-verified signal is now production code: `{"name": "addressor_concentration_drift", ...}` joins the detector family (default threshold 0.6 — the experiment's "control max + margin" rule; fires after `run_steps` consecutive steps above it). The scope records per-slot addressing shares for any module named `addressor` (mean softmax weight per slot over tokens — matching the experiment's signal) into `moe.arrow`, and the Routing & addressing view renders per-slot share series for addressor blocks alongside per-expert series for routers. No schema change: the existing `MOE_SCHEMA` stream already carries per-block share vectors.
+
 ## [1.4.1] - Addressor-Collapse Verification
 
 ### Added

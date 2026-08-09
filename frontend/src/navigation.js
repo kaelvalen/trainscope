@@ -27,9 +27,9 @@ export const NAV_ITEMS = [
   },
   {
     id: 'moe',
-    label: 'Expert utilization',
-    eyebrow: 'MoE routing',
-    description: 'Per-expert routing shares over time (Mixtral-style models).',
+    label: 'Routing & addressing',
+    eyebrow: 'MoE / memory',
+    description: 'Per-expert and per-slot routing shares over time.',
     shortcut: '4',
     icon: Network,
   },

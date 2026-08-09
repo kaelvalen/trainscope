@@ -12,6 +12,9 @@ from torch.optim import Optimizer
 from trainscope.core.buffer import RollingBuffer
 from trainscope.core.config import TrainScopeConfig
 from trainscope.core.detectors import make_detector
+from trainscope.core.detectors.addressor_concentration import (
+    AddressorConcentrationDriftDetector,
+)
 from trainscope.core.detectors.expert_utilization import ExpertUtilizationDriftDetector
 from trainscope.core.metrics import (
     compute_activation_metrics,
@@ -176,24 +179,31 @@ class TrainScope:
         return self
 
     def _attach_moe_hooks(self) -> None:
-        """Record per-expert routing share for Mixtral-style MoE models.
+        """Record per-expert/per-slot share for MoE and memory-augmented models.
 
-        Any module whose parameter name contains ``router`` is treated as a
-        token-to-expert router. Its forward output is a logits tensor of shape
-        ``(..., n_experts)``; the share of tokens routed to each expert (by
-        argmax) is stored in ``self._moe_cache`` keyed by module name. If the
-        configured detector is ``expert_utilization_drift`` the cache feeds
-        it; otherwise the cache is still persisted to ``moe.arrow`` so the UI
-        can render utilization over time.
+        Two module kinds are recognized by name:
+
+        - ``router`` (Mixtral-style MoE): forward output is a logits tensor
+          of shape ``(..., n_experts)``; the share of tokens routed to each
+          expert (by argmax) is stored in ``self._moe_cache``.
+        - ``addressor`` (memory-augmented): forward output is the softmax
+          addressing weights over memory slots; the mean weight per slot
+          (over tokens) is stored, matching the v1.4.1 experiment's signal.
+
+        If the configured detector is ``expert_utilization_drift`` or
+        ``addressor_concentration_drift`` the cache feeds it; otherwise the
+        cache is still persisted to ``moe.arrow`` so the UI can render
+        utilization over time.
         """
-        if not any("router" in n for n, _ in self._model.named_modules()):
+        targets = [n for n, _ in self._model.named_modules() if "router" in n or "addressor" in n]
+        if not targets:
             return
 
-        router_names = [n for n, _ in self._model.named_modules() if "router" in n]
-        for name in router_names:
+        for name in targets:
             module = self._model.get_submodule(name)
+            is_addressor = "addressor" in name
 
-            def make_moe_hook(block_name: str):
+            def make_moe_hook(block_name: str, addressor: bool):
                 def hook(_module, _input, output):
                     tensor = None
                     if isinstance(output, torch.Tensor):
@@ -206,16 +216,26 @@ class TrainScope:
                     if tensor is None or tensor.numel() == 0:
                         return
                     flat = tensor.detach().float().reshape(-1, tensor.shape[-1])
-                    argmax = flat.argmax(dim=-1)
-                    counts = torch.bincount(argmax, minlength=flat.shape[-1])
-                    shares = (counts / counts.sum()).tolist()
+                    if addressor:
+                        # Softmax addressing weights: mean over tokens, per slot.
+                        weights = torch.softmax(flat, dim=-1).mean(dim=0)
+                        shares = weights.tolist()
+                    else:
+                        argmax = flat.argmax(dim=-1)
+                        counts = torch.bincount(argmax, minlength=flat.shape[-1])
+                        shares = (counts / counts.sum()).tolist()
                     self._moe_cache[block_name] = shares
 
                 return hook
 
-            self._hooks.append(module.register_forward_hook(make_moe_hook(name)))
+            self._hooks.append(module.register_forward_hook(make_moe_hook(name, is_addressor)))
 
-        logger.info("Attached MoE routing hooks for %d router(s)", len(router_names))
+        logger.info(
+            "Attached MoE/memory hooks for %d module(s) (%d router, %d addressor)",
+            len(targets),
+            sum(1 for n in targets if "router" in n),
+            sum(1 for n in targets if "addressor" in n),
+        )
 
     def _compute_global_grad_norm(self) -> float:
         total_sq = 0.0
@@ -312,9 +332,12 @@ class TrainScope:
         if not math.isfinite(loss_f):
             # Do not poison the detector's baseline with NaN/Inf.
             score = None
-        elif isinstance(self._detector, ExpertUtilizationDriftDetector):
-            # Architecture-aware detector: consume the routing-concentration
-            # signal instead of the loss (see the v1.3.0 experiment).
+        elif isinstance(
+            self._detector, (ExpertUtilizationDriftDetector, AddressorConcentrationDriftDetector)
+        ):
+            # Architecture-aware detectors: consume the routing/addressing
+            # concentration signal instead of the loss (see the v1.3.0 and
+            # v1.4.1 experiments).
             max_share = max((max(v) for v in self._moe_cache.values()), default=0.0)
             score = self._detector.update(max_share)
         else:

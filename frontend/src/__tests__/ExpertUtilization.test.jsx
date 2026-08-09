@@ -21,8 +21,10 @@ class MockWebSocket {
 const MOE_ROWS = [
   { step: 0, block: 'blocks.0.router', shares: [0.25, 0.25, 0.25, 0.25] },
   { step: 0, block: 'blocks.1.router', shares: [0.25, 0.25, 0.25, 0.25] },
+  { step: 0, block: 'blocks.0.addressor', shares: Array(16).fill(1 / 16) },
   { step: 1, block: 'blocks.0.router', shares: [0.9, 0.03, 0.03, 0.04] },
   { step: 1, block: 'blocks.1.router', shares: [0.25, 0.25, 0.25, 0.25] },
+  { step: 1, block: 'blocks.0.addressor', shares: [0.7, ...Array(15).fill(0.02)] },
 ]
 
 function mockFetch() {
@@ -73,7 +75,7 @@ describe('ExpertUtilization view', () => {
       </ToastProvider>
     )
     await waitFor(() =>
-      expect(screen.getByText(/No MoE routing data in this run/)).toBeInTheDocument()
+      expect(screen.getByText(/No routing or addressing data in this run/)).toBeInTheDocument()
     )
   })
 
@@ -89,6 +91,7 @@ describe('ExpertUtilization view', () => {
       expect(screen.getByText(/Routing shares — blocks\.0\.router/)).toBeInTheDocument()
     )
     expect(screen.getByText(/Routing shares — blocks\.1\.router/)).toBeInTheDocument()
+    expect(screen.getByText(/Routing shares — blocks\.0\.addressor/)).toBeInTheDocument()
     expect(screen.getByText('Router blocks')).toBeInTheDocument()
     // Expert 1 of block 0 has 0.90 share -> danger badge.
     expect(screen.getByText('expert 1: 0.90')).toBeInTheDocument()

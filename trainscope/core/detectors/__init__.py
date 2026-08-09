@@ -2,6 +2,9 @@
 
 from typing import TYPE_CHECKING
 
+from trainscope.core.detectors.addressor_concentration import (
+    AddressorConcentrationDriftDetector,
+)
 from trainscope.core.detectors.base import AnomalyDetector
 from trainscope.core.detectors.changepoint import ChangePointDetector
 from trainscope.core.detectors.expert_utilization import ExpertUtilizationDriftDetector
@@ -16,6 +19,7 @@ _REGISTRY: dict[str, type[AnomalyDetector]] = {
     "percentile": PercentileDetector,
     "changepoint": ChangePointDetector,
     "expert_utilization_drift": ExpertUtilizationDriftDetector,
+    "addressor_concentration_drift": AddressorConcentrationDriftDetector,
 }
 
 
@@ -55,6 +59,7 @@ __all__ = [
     "PercentileDetector",
     "ChangePointDetector",
     "ExpertUtilizationDriftDetector",
+    "AddressorConcentrationDriftDetector",
     "register_detector",
     "make_detector",
 ]

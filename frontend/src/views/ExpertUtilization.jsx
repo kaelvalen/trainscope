@@ -36,7 +36,7 @@ export default function ExpertUtilization() {
         if (!cancelled) setRows(Array.isArray(data) ? data : [])
       })
       .catch((err) => {
-        if (!cancelled) setError(err?.message || 'Failed to load MoE routing data.')
+        if (!cancelled) setError(err?.message || 'Failed to load routing/addressing data.')
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -104,8 +104,10 @@ export default function ExpertUtilization() {
   if (rows.length === 0) {
     return (
       <EmptyState icon={<Network className="h-5 w-5" />}>
-        No MoE routing data in this run. This panel appears for Mixtral-style models with a module
-        named <code className="text-foreground">router</code>; routing shares are recorded per step.
+        No routing or addressing data in this run. This panel appears for Mixtral-style models with
+        a module named <code className="text-foreground">router</code> (routing shares) or
+        memory-augmented models with an <code className="text-foreground">addressor</code>
+        (memory-slot shares), recorded per step.
       </EmptyState>
     )
   }
@@ -134,7 +136,7 @@ export default function ExpertUtilization() {
           <ChartCard
             key={block}
             title={`Routing shares — ${block}`}
-            description="Fraction of tokens routed to each expert, per step."
+            description="Share of tokens routed to each expert / memory slot, per step."
           >
             <Chart
               data={Array.from({ length: nExperts }, (_, expert) => ({
