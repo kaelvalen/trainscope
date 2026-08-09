@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - Run Comparison
 
 ### Added
 - **Run comparison (Phase 1 body).** The Runs view now lets you check two or more runs and compare them: overlaid loss curves with an automatic **divergence point** (the first step where the curves durably separate — median warmup gap as baseline, requires 3 consecutive steps above 3x), a **config-diff** table (every `trainscope_config`/`model_config` field that differs across the selected runs), and a **common-cause** summary (numeric/boolean config traits shared by every spiked run but absent from every stable run, e.g. "all spiked runs have `detector.threshold` >= 6.0"). Backed by `GET /api/compare?runs=a,b,c`. Arrow schema unchanged.
