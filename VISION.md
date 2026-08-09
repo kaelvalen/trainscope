@@ -54,8 +54,29 @@ memory-augmented architectures) — and no competitor (W&B, MLflow,
 TensorBoard) goes there, because they prefer to stay architecture-agnostic.
 
 Concretely: you train a MoE, the loss never spikes but the model quality is
-poor — trainscope tells you "expert 3 has not been selected since step 200",
-a problem visible in no loss curve.
+poor — trainscope tells you "routing has concentrated on expert 1 since
+step 200; the other three experts are idle", a problem visible in no loss
+curve.
+
+**Empirical status (v1.3.0).** The expert-collapse claim has been tested the
+same way the CUSUM claim was, via `scripts/verify_expert_collapse_signal.py`
+(mini Mixtral-style MoE, 4 experts top-2, wikitext-2). Result is **positive
+but more specific than the original phrasing**:
+
+- **Routing concentration is a real early warning**: in the organic
+  LR-ramp divergence, max-expert share exceeded 0.85 durably 4–12 steps
+  (mean 7.7) before the loss exploded, in 3/3 seeds; the stable control
+  produced zero collapses in 3/3 seeds.
+- **"Dead expert" is NOT a signal**: one of four experts dropping below
+  2% share happens in the stable control too (top-2-of-4 routing
+  naturally neglects an expert), so "expert 3 has not been selected since
+  step 200" is normal behavior, not a pathology. Phase 2 detectors must
+  key on *concentration* (single-expert dominance), not on per-expert
+  abandonment.
+
+This decides what v1.4.0 must build: an expert-utilization detector that
+measures routing concentration drift, and a UI panel showing per-expert
+share over time.
 
 ### Phase 3 — "Can trainscope defend itself?"
 
