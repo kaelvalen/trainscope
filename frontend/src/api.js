@@ -44,7 +44,7 @@ function validateApiResponse(path, data) {
     return
   }
 
-  const listEndpoints = ['/global', '/layers', '/spikes', '/layers/ranked']
+  const listEndpoints = ['/global', '/layers', '/spikes', '/layers/ranked', '/runs']
   const basePath = path.split('?')[0]
   if (listEndpoints.includes(basePath)) {
     if (!Array.isArray(data)) {
@@ -193,4 +193,17 @@ export async function fetchDiff(stepA, stepB) {
     throw new ApiError('Both step numbers must be integers')
   }
   return request(`/diff?step_a=${a}&step_b=${b}`)
+}
+
+export async function fetchRuns() {
+  return request('/runs')
+}
+
+export async function selectRun(name) {
+  if (!name) throw new ApiError('Run name is required')
+  return request('/runs/select', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+  })
 }

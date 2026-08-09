@@ -155,6 +155,9 @@ class _TTLCache:
         self._data[key] = (value, now + self._ttl)
         self._data.move_to_end(key)
 
+    def clear(self) -> None:
+        self._data.clear()
+
 
 class DiffParams(BaseModel):
     step_a: int = Field(..., ge=0, description="First step to compare")
@@ -170,14 +173,43 @@ class RankedParams(BaseModel):
     )
 
 
-def create_app(run_path: str) -> FastAPI:
+class SelectRunParams(BaseModel):
+    name: str = Field(..., min_length=1, description="Run directory name to activate")
+
+
+def _discover_run_dirs(root: Path) -> list[Path]:
+    """Return run directories under ``root`` (sorted, deterministic)."""
+    if not root.exists() or not root.is_dir():
+        return []
+    return sorted(
+        (
+            p
+            for p in root.iterdir()
+            if p.is_dir() and ((p / "meta.json").exists() or (p / "global.arrow").exists())
+        ),
+        key=lambda p: p.name.lower(),
+    )
+
+
+def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
     rp = Path(run_path).resolve()
+    rr = Path(runs_root).resolve() if runs_root else None
+    multi_run = rr is not None
+    if multi_run:
+        assert rr is not None
+        discovered = _discover_run_dirs(rr)
+        if discovered:
+            rp = discovered[0]
     static_dir = Path(__file__).parent / "static"
     _cache = _TTLCache(maxsize=128, ttl=60.0)
 
     @asynccontextmanager
     async def _lifespan(_app: FastAPI):
-        logger.info("Starting TrainScope UI for run: %s", rp)
+        mode = "multi-run" if multi_run else "single-run"
+        logger.info("Starting TrainScope UI (%s) for run: %s", mode, rp)
+        if multi_run:
+            assert rr is not None
+            logger.info("Runs root: %s (%d run dirs)", rr, len(_discover_run_dirs(rr)))
         if not rp.exists():
             logger.warning("Run path does not exist: %s", rp)
         elif not rp.is_dir():
@@ -213,6 +245,72 @@ def create_app(run_path: str) -> FastAPI:
             "exists": rp.exists(),
             "static_served": (static_dir / "index.html").exists(),
         }
+
+    async def _read_run_summary(run_dir: Path) -> dict[str, Any]:
+        """Build a lightweight summary of a single run from its metadata files."""
+        meta = await _read_json_optional(run_dir / "meta.json") or {}
+        manifest = await _read_json_optional(run_dir / "manifest.json") or {}
+        tc_config = meta.get("trainscope_config") or {}
+
+        steps = await _get_spike_steps(run_dir)
+
+        last_row: dict[str, Any] = {}
+        global_rows = await _read_arrow(run_dir / "global.arrow")
+        if global_rows:
+            last_row = global_rows[-1]
+
+        return {
+            "name": run_dir.name,
+            "path": str(run_dir),
+            "model_name": meta.get("model_name"),
+            "model_config": meta.get("model_config"),
+            "detector": tc_config.get("detector"),
+            "start_time": meta.get("start_time"),
+            "last_step": manifest.get("last_step"),
+            "n_global_rows": manifest.get("n_global_rows"),
+            "spike_count": len(steps),
+            "last_loss": last_row.get("loss"),
+            "last_grad_norm": last_row.get("grad_norm_before_clip"),
+            "updated_at": manifest.get("updated_at"),
+            "is_active": run_dir == rp,
+        }
+
+    @app.get("/api/runs")
+    async def get_runs() -> list[dict[str, Any]]:
+        """List every run under the root (or the single run) with meta summary."""
+        if multi_run:
+            assert rr is not None
+            dirs = _discover_run_dirs(rr)
+        else:
+            dirs = [rp] if rp.is_dir() else []
+        summaries = []
+        for run_dir in dirs:
+            summaries.append(await _read_run_summary(run_dir))
+        summaries.sort(key=lambda s: (s["start_time"] or "", s["name"]))
+        return summaries
+
+    @app.post("/api/runs/select")
+    async def select_run(params: SelectRunParams) -> dict[str, Any]:
+        """Switch the active run in multi-run mode (no-op in single-run mode)."""
+        nonlocal rp
+        if not multi_run:
+            if params.name != rp.name:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Single-run mode only exposes the current run",
+                )
+            return await _read_run_summary(rp)
+
+        assert rr is not None
+        candidates = [d for d in _discover_run_dirs(rr) if d.name == params.name]
+        if not candidates:
+            raise HTTPException(status_code=404, detail=f"Run '{params.name}' not found")
+        rp = candidates[0]
+        # Per-run caches (ranked layers, diff index) are keyed without a run
+        # suffix; drop them so the next request rebuilds against the new run.
+        _cache.clear()
+        logger.info("Switched active run to: %s", rp)
+        return await _read_run_summary(rp)
 
     @app.get("/api/manifest")
     async def manifest() -> Any:
@@ -450,11 +548,12 @@ def start_server(
     host: str = "127.0.0.1",
     port: int = 7007,
     log_level: str = "info",
+    runs_root: str | None = None,
 ) -> None:
     import uvicorn
 
     uvicorn.run(
-        create_app(run_path),
+        create_app(run_path, runs_root=runs_root),
         host=host,
         port=port,
         log_level=log_level.lower(),

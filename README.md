@@ -134,6 +134,11 @@ cd frontend && npm install && npm run build
 trainscope ui --run ./trainscope_runs/run_20250516_143022 \
     [--host 127.0.0.1] [--port 7007] [--log-level INFO]
 
+# Open UI for every run under a root directory (multi-run mode):
+# the Runs view lists all runs side by side with last loss and spike
+# count; selecting one switches every other view to it.
+trainscope ui --runs ./trainscope_runs
+
 # Print version
 trainscope --version
 

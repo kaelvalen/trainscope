@@ -15,9 +15,11 @@ const MAX_RECONNECT_ATTEMPTS = 5
  * Subscribe to the TrainScope WebSocket stream.
  *
  * The hook reconnects with exponential backoff and finally reports
- * `unavailable` so callers can fall back to REST polling.
+ * `unavailable` so callers can fall back to REST polling. Pass a `resetKey`
+ * (e.g. the active run name) to force a fresh connection when it changes —
+ * the server streams whichever run is currently active.
  */
-export function useWebSocket({ onMessage, onStatusChange, enabled = true }) {
+export function useWebSocket({ onMessage, onStatusChange, enabled = true, resetKey }) {
   const onMessageRef = useRef(onMessage)
   const onStatusChangeRef = useRef(onStatusChange)
 
@@ -97,5 +99,5 @@ export function useWebSocket({ onMessage, onStatusChange, enabled = true }) {
         ws.close()
       }
     }
-  }, [enabled])
+  }, [enabled, resetKey])
 }

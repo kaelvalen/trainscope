@@ -73,6 +73,35 @@ def test_ui_passes_host_port_log_level(runner, tmp_path: Path):
     )
 
 
+def test_ui_requires_exactly_one_of_run_or_runs(runner, tmp_path: Path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    with patch("trainscope.ui.server.start_server") as mock_start:
+        # Both provided -> rejected.
+        result = runner.invoke(cli, ["ui", "--run", str(run_dir), "--runs", str(run_dir)])
+    assert result.exit_code != 0
+    assert "exactly one" in result.output
+    mock_start.assert_not_called()
+
+    # Neither provided -> rejected.
+    with patch("trainscope.ui.server.start_server") as mock_start:
+        result = runner.invoke(cli, ["ui"])
+    assert result.exit_code != 0
+    assert "exactly one" in result.output
+    mock_start.assert_not_called()
+
+
+def test_ui_starts_server_with_runs_root(runner, tmp_path: Path):
+    root = tmp_path / "runs_root"
+    root.mkdir()
+    with patch("trainscope.ui.server.start_server") as mock_start:
+        result = runner.invoke(cli, ["ui", "--runs", str(root)])
+    assert result.exit_code == 0, result.output
+    args, kwargs = mock_start.call_args
+    assert args[0] == str(root.resolve())
+    assert kwargs.get("runs_root") == str(root.resolve())
+
+
 def test_replay_writes_config(runner, checkpoint: Path, tmp_path: Path):
     output = tmp_path / "replay_config.json"
     result = runner.invoke(
