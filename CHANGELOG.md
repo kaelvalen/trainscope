@@ -5,9 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - Stability Promise
 
 ### Added
+- `VISION.md`: documents the product direction — the single-run promise today, the three-phase future (multi-run comparison, architecture-aware diagnostics, stability discipline), and the two directions deliberately rejected (inference-time fleet monitoring, general-purpose W&B/MLflow-style dashboards).
 - `scripts/verify_kurtosis_early_warning.py`: empirical check of the README's activation-kurtosis claim, run on the same organic mini-GPT-2/wikitext-2 LR-ramp divergence as the CUSUM experiment. The earlier "kurtosis rises 1–5 steps before explosion" estimate was **not** reproduced: kurtosis crossed its robust baseline margin 14–18 steps (mean 16.7) before loss divergence, *ahead of* CUSUM's 9–11 step detection. README updated accordingly.
 
 ## [0.9.1] - Stability Audit & Bundle Slimming
