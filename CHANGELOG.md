@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] - Phase 2 Empirical Gate
 
 ### Added
 - `scripts/verify_expert_collapse_signal.py`: empirical check of Phase 2's expert-collapse claim, on a mini Mixtral-style MoE (4 experts, top-2 routing) trained on wikitext-2. Result is **positive with a caveat**: routing *concentration* (max-expert share > 0.85 sustained) preceded loss divergence by 4–12 steps (mean 7.7) in 3/3 LR-ramp seeds, with zero collapses in 3/3 stable-control seeds — so the signal is specific. But a "dead expert" (share < 2%) also occurs in the stable control, so per-expert abandonment is normal MoE behavior, not a pathology; Phase 2 detectors must key on concentration. VISION.md updated with the empirical status and the corrected example.
