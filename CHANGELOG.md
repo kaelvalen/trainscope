@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `scripts/verify_addressor_collapse_signal.py`: empirical check of the addressor-collapse claim (memory-augmented architecture sibling of the MoE experiment), on a mini memory-augmented transformer with 16 soft-addressed slots trained on wikitext-2. Result is **positive**: mean max-slot addressing share exceeded 0.6 durably 7–11 steps (mean 9.3) before loss divergence in 3/3 LR-ramp seeds, with zero collapses in 3/3 stable-control seeds (max share 0.24–0.32). Healthy runs use the memory bank diffusely; diverging runs lock onto one slot before the loss follows. VISION.md updated with the empirical status.
+
 ## [1.4.0] - Architecture-Aware Diagnostics
 
 ### Added
