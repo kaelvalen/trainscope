@@ -38,6 +38,7 @@ describe('RunProvider live updates', () => {
         '/api/global': [],
         '/api/layers': [],
         '/api/spikes': [],
+        '/api/runs': [],
       }
       return {
         ok: true,

@@ -54,14 +54,25 @@ def cli() -> None:
 @cli.command()
 @click.option(
     "--run",
-    required=True,
+    default=None,
     type=click.Path(
         exists=True,
         file_okay=False,
         readable=True,
         path_type=Path,
     ),
-    help="Path to the trainscope run directory",
+    help="Path to a single trainscope run directory",
+)
+@click.option(
+    "--runs",
+    default=None,
+    type=click.Path(
+        exists=True,
+        file_okay=False,
+        readable=True,
+        path_type=Path,
+    ),
+    help="Path to a root directory containing multiple run directories",
 )
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=7007, show_default=True, type=int)
@@ -74,13 +85,27 @@ def cli() -> None:
         case_sensitive=False,
     ),
 )
-def ui(run: Path, host: str, port: int, log_level: str) -> None:
-    """Start the TrainScope web UI for a run directory."""
+def ui(run: Path | None, runs: Path | None, host: str, port: int, log_level: str) -> None:
+    """Start the TrainScope web UI for a run (or a directory of runs)."""
     from trainscope.ui.server import start_server
 
-    click.echo(f"Starting TrainScope UI for run: {run}")
+    if (run is None) == (runs is None):
+        raise click.ClickException("Specify exactly one of --run or --runs")
+
+    if run is not None:
+        click.echo(f"Starting TrainScope UI for run: {run}")
+        start_server(str(run.resolve()), host=host, port=port, log_level=log_level)
+    else:
+        assert runs is not None
+        click.echo(f"Starting TrainScope UI for runs under: {runs}")
+        start_server(
+            str(runs.resolve()),
+            host=host,
+            port=port,
+            log_level=log_level,
+            runs_root=str(runs.resolve()),
+        )
     click.echo(f"Open http://{host}:{port} in your browser")
-    start_server(str(run.resolve()), host=host, port=port, log_level=log_level)
 
 
 @cli.command()

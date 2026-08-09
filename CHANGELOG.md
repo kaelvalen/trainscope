@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Multi-run reading (Phase 1 foundation).** `trainscope ui --runs <root>` opens a root directory containing many runs instead of a single run. The new Runs view lists every run side by side — model, detector, step count, last loss, spike count — so "which runs exploded overnight" is visible at a glance; selecting a run switches the Timeline/Layer/Diff/Spike views to it. Backed by `GET /api/runs` (summaries from each run's `meta.json`/`manifest.json`/`global.arrow`) and `POST /api/runs/select` (switches the active run; per-run server caches are invalidated). Arrow schema unchanged. No comparison logic yet — that is the next milestone.
+
 ## [1.0.0] - Stability Promise
 
 ### Added

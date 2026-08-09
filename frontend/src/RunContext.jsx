@@ -1,5 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
-import { fetchMeta, fetchGlobal, fetchLayers, fetchSpikes, abortAllRequests } from './api.js'
+import {
+  fetchMeta,
+  fetchGlobal,
+  fetchLayers,
+  fetchSpikes,
+  abortAllRequests,
+  fetchRuns,
+  selectRun,
+} from './api.js'
 import { useWebSocket } from './ws.js'
 import { useToast } from './context/ToastContext.jsx'
 
@@ -53,6 +61,8 @@ export function RunProvider({ children }) {
   const [globalData, setGlobalData] = useState([])
   const [layerNames, setLayerNames] = useState([])
   const [spikes, setSpikes] = useState([])
+  const [runs, setRuns] = useState([])
+  const [activeRunName, setActiveRunName] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [liveStatus, setLiveStatus] = useState('connecting')
@@ -68,16 +78,18 @@ export function RunProvider({ children }) {
     setError(null)
 
     try {
-      const [metaData, gData, names, spikeList] = await Promise.all([
+      const [metaData, gData, names, spikeList, runList] = await Promise.all([
         silent ? Promise.resolve(null) : fetchMeta(),
         fetchGlobal(),
         fetchLayers(),
         fetchSpikes(),
+        fetchRuns(),
       ])
       if (!silent) setMeta(metaData)
       const nextGlobalData = Array.isArray(gData) ? gData : []
       const nextLayerNames = Array.isArray(names) ? names : []
       const nextSpikes = Array.isArray(spikeList) ? spikeList : []
+      const nextRuns = Array.isArray(runList) ? runList : []
 
       // An Arrow file can be momentarily unavailable while it is being
       // replaced. Keep the last good snapshot instead of turning the live
@@ -105,6 +117,14 @@ export function RunProvider({ children }) {
         if (previous.length > 0 && nextSpikes.length === 0) return previous
         return sameSpikes(previous, nextSpikes) ? previous : nextSpikes
       })
+      setRuns((previous) =>
+        sameValues(
+          previous.map((r) => r.name),
+          nextRuns.map((r) => r.name)
+        )
+          ? previous
+          : nextRuns
+      )
       if (!silent) setLastUpdatedAt(Date.now())
     } catch (err) {
       if (err.name !== 'AbortError') {
@@ -196,8 +216,30 @@ export function RunProvider({ children }) {
     onStatusChange: setLiveStatus,
     // Connect immediately so a run that starts with an empty Arrow file can
     // still push its first batch into the UI without requiring a refresh.
+    // resetKey forces a fresh connection when the active run changes.
     enabled: true,
+    resetKey: activeRunName,
   })
+
+  const switchRun = useCallback(
+    async (name) => {
+      try {
+        const summary = await selectRun(name)
+        setActiveRunName(summary?.name ?? name)
+        // Abort in-flight requests from the previous run, then reload.
+        abortAllRequests()
+        await load()
+        setRuns((previous) =>
+          previous.map((r) => ({ ...r, is_active: r.name === (summary?.name ?? name) }))
+        )
+        return summary
+      } catch (err) {
+        setError(err?.message || 'Failed to switch run.')
+        return null
+      }
+    },
+    [load]
+  )
 
   // Reconcile periodically even while connected so a missed delta or a
   // reconnect cannot leave the chart stuck on the first streamed batch.
@@ -221,6 +263,9 @@ export function RunProvider({ children }) {
       layerNames,
       spikes,
       spikeEvents,
+      runs,
+      activeRunName,
+      switchRun,
       loading,
       error,
       refresh: () => load(),
@@ -234,6 +279,9 @@ export function RunProvider({ children }) {
       layerNames,
       spikes,
       spikeEvents,
+      runs,
+      activeRunName,
+      switchRun,
       loading,
       error,
       load,

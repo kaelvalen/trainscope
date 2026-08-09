@@ -414,3 +414,90 @@ def test_server_reads_stream_format_run(tmp_path):
     assert layer_rows[0]["step"] == 0
     assert layer_rows[0]["grad_l2_norm"] == 0.1
     assert layer_rows[0]["act_kurtosis"] is None
+
+
+class TestMultiRun:
+    def test_runs_lists_single_run_when_no_root(self, client):
+        """Single-run mode exposes the current run as a one-element list."""
+        runs = client.get("/api/runs").json()
+        assert len(runs) == 1
+        assert runs[0]["name"] == "run"
+        assert runs[0]["model_name"] == "TestModel"
+        assert runs[0]["n_global_rows"] == 5
+        assert runs[0]["spike_count"] == 1
+        assert runs[0]["last_loss"] == 4.0
+        assert runs[0]["is_active"] is True
+
+    def test_runs_lists_and_selects_across_root(self, run_dir, tmp_path):
+        """--runs mode: /api/runs lists every run, select switches the active one."""
+        root = tmp_path / "root"
+        root.mkdir()
+
+        import shutil
+
+        shutil.copytree(run_dir, root / "run_a")
+        # Second run with different loss and no spikes.
+        run_b = root / "run_b"
+        run_b.mkdir()
+        run_b.joinpath("meta.json").write_text(
+            json.dumps(
+                {
+                    "model_name": "TestModelB",
+                    "model_config": {},
+                    "trainscope_config": {"run_name": "run_b"},
+                }
+            )
+        )
+        rows = [
+            {
+                "step": i,
+                "loss": 2.0 + 0.01 * i,
+                "grad_norm_before_clip": 1.0,
+                "grad_norm_after_clip": 1.0,
+                "lr": 0.001,
+                "optimizer_v_norm": 0.0,
+                "step_time_ms": 1.0,
+                "batch_index": i,
+                "is_spike": False,
+                "cpu_memory_mb": 0.0,
+                "cuda_memory_mb": 0.0,
+            }
+            for i in range(10)
+        ]
+        _write_arrow(run_b / "global.arrow", GLOBAL_SCHEMA, rows)
+        run_b.joinpath("manifest.json").write_text(
+            json.dumps({"last_step": 9, "n_global_rows": 10})
+        )
+
+        client = TestClient(create_app(str(root / "run_a"), runs_root=str(root)))
+        runs = client.get("/api/runs").json()
+        names = {r["name"] for r in runs}
+        assert names == {"run_a", "run_b"}
+
+        by_name = {r["name"]: r for r in runs}
+        assert by_name["run_a"]["is_active"] is True
+        assert by_name["run_a"]["spike_count"] == 1
+        assert by_name["run_b"]["spike_count"] == 0
+        assert by_name["run_b"]["n_global_rows"] == 10
+
+        # Default active run is the first discovered run (run_a).
+        assert client.get("/api/global").json()[0]["step"] == 0
+        assert client.get("/api/meta").json()["model_name"] == "TestModel"
+
+        # Switch to run_b: meta/global now point at it.
+        resp = client.post("/api/runs/select", json={"name": "run_b"})
+        assert resp.status_code == 200
+        assert resp.json()["name"] == "run_b"
+        assert resp.json()["is_active"] is True
+
+        meta = client.get("/api/meta").json()
+        assert meta["model_name"] == "TestModelB"
+        global_rows = client.get("/api/global").json()
+        assert len(global_rows) == 10
+
+        # Unknown run -> 404.
+        assert client.post("/api/runs/select", json={"name": "nope"}).status_code == 404
+
+    def test_select_mismatch_in_single_run_mode(self, client):
+        resp = client.post("/api/runs/select", json={"name": "other"})
+        assert resp.status_code == 400
