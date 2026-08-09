@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - Stability Audit & Bundle Slimming
+
+### Added
+- `scripts/verify_cusum_early_warning.py`: reproducible experiment that closes the long-standing empirical question about CUSUM's early-warning claim. On a real, organic mini-GPT-2/wikitext-2 loss explosion (LR ramp crossing the stability threshold — no scripted spike), the `ChangePointDetector` fired 9–11 steps (mean 9.7) before the loss diverged, across 3/3 seeds. This validates the README claim, which now cites the script instead of stating the early-warning window as design intent.
+- `frontend/src/utils/diagnosis.js`: the SpikeInspector's cascade-diagnosis logic (spike_score reading, drift/gradient-explosion/NaN step detection, chronological event ordering) is extracted into a pure, unit-tested module. Previously that logic lived inline in the component and was only verified by eye.
+- Documented the 1.0 stability scope in README ("Stability scope" section): the Python API and config surface are the SemVer contract; the Arrow file format is additive-only within a major (new nullable fields = minor, removal/type change = major); the HTTP/WebSocket API is declared an implementation detail of the bundled UI rather than a public contract.
+
+### Changed
+- **Breaking (1.0 prep):** `spike_threshold` was removed from `TrainScopeConfig`. Detector thresholds are configured per-detector: `detector={"name": "z_score", "threshold": 3.5}` (the `z_score` detector's default remains 3.5). `load_config` and `TRAINSCOPE_*` env loading now reject the old key with a migration hint instead of silently mis-scaling CUSUM or failing on `percentile`.
+- **Breaking (1.0 prep):** `StopTraining.z_score` was renamed to `StopTraining.spike_score`, since the attribute carries the *active detector's* score (CUSUM's cumulative sum, not a z-score, by default). The old name remains as a `@property` emitting `DeprecationWarning`. The `spike_info` dict passed to callbacks/alerters and returned by `step()` now contains `spike_score` (canonical) and keeps `z_score` as a legacy alias with the same value.
+- Frontend bundle: views and Plotly are now lazy-loaded (`React.lazy` + dynamic `import()`). The initial shell drops from ~52KB to ~29KB JS (gzip ~58KB total with vendor) and the 4.9MB Plotly bundle is only fetched when the first chart renders instead of on page load.
+- Frontend dev dependencies upgraded to close all 8 `npm audit` findings (vite 5→6, vitest 1→3, @vitejs/plugin-react 4.3→4.7). All were build-time/dev tooling — no runtime dependency changed.
+
 ## [0.8.0] - Signal-Analysis UI Redesign
 
 ### Changed
