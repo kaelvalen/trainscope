@@ -1,4 +1,4 @@
-import { Activity, FolderKanban, GitCompare, Layers3, Zap } from 'lucide-react'
+import { Activity, FolderKanban, GitCompare, Layers3, Network, Zap } from 'lucide-react'
 
 export const NAV_ITEMS = [
   {
@@ -26,11 +26,19 @@ export const NAV_ITEMS = [
     icon: Layers3,
   },
   {
+    id: 'moe',
+    label: 'Expert utilization',
+    eyebrow: 'MoE routing',
+    description: 'Per-expert routing shares over time (Mixtral-style models).',
+    shortcut: '4',
+    icon: Network,
+  },
+  {
     id: 'diff',
     label: 'Diff view',
     eyebrow: 'State comparison',
     description: 'Compare weight distributions between any two training steps.',
-    shortcut: '4',
+    shortcut: '5',
     icon: GitCompare,
   },
   {
@@ -38,7 +46,7 @@ export const NAV_ITEMS = [
     label: 'Spike inspector',
     eyebrow: 'Anomaly response',
     description: 'Turn a loss spike into a chronological root-cause story.',
-    shortcut: '5',
+    shortcut: '6',
     icon: Zap,
   },
 ]

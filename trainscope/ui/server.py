@@ -515,6 +515,11 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
     async def get_layers() -> list[str]:
         return await _get_layers(rp)
 
+    @app.get("/api/moe")
+    async def get_moe() -> list[dict]:
+        """Per-block expert routing shares for the active run (MoE models)."""
+        return await _read_arrow(rp / "moe.arrow")
+
     @app.get("/api/layers/ranked")
     async def get_layers_ranked(
         params: Annotated[RankedParams, Depends()],

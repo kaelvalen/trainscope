@@ -21,9 +21,11 @@ from trainscope.core.config import TrainScopeConfig
 from trainscope.io.writer import (
     GLOBAL_SCHEMA,
     LAYER_SCHEMA,
+    MOE_SCHEMA,
     PLUGIN_METRICS_SCHEMA,
     _make_global_batch,
     _make_layer_batch,
+    _make_moe_batch,
     _make_plugin_metrics_batch,
     read_arrow_rows_bytes,
 )
@@ -88,10 +90,12 @@ class RemoteWriter:
         self._global_buffer: list[dict] = []
         self._layer_buffers: dict[str, list[dict]] = {}
         self._plugin_metrics_buffer: list[dict] = []
+        self._moe_buffer: list[dict] = []
 
         self._global_rows: list[dict] = []
         self._layer_rows: dict[str, list[dict]] = {}
         self._plugin_metrics_rows: list[dict] = []
+        self._moe_rows: list[dict] = []
 
         self._n_global_rows = 0
         self._last_step: int | None = None
@@ -100,6 +104,7 @@ class RemoteWriter:
         self._global_rows_since_write = 0
         self._layer_rows_since_write: dict[str, int] = {}
         self._plugin_rows_since_write = 0
+        self._moe_rows_since_write = 0
 
         if self._config.resume:
             self._load_resume_state()
@@ -122,6 +127,9 @@ class RemoteWriter:
 
     def _plugin_metrics_path(self) -> str:
         return f"{self._path}/plugin_metrics.arrow"
+
+    def _moe_path(self) -> str:
+        return f"{self._path}/moe.arrow"
 
     def _meta_path(self) -> str:
         return f"{self._path}/meta.json"
@@ -164,6 +172,10 @@ class RemoteWriter:
         if plugin_rows:
             self._plugin_metrics_rows = plugin_rows
 
+        moe_rows = self._read_arrow_rows(self._moe_path())
+        if moe_rows:
+            self._moe_rows = moe_rows
+
     # ------------------------------------------------------------------ #
     # Metadata
     # ------------------------------------------------------------------ #
@@ -190,6 +202,7 @@ class RemoteWriter:
             "layer_files": layer_files,
             "n_plugin_metric_rows": len(self._plugin_metrics_rows)
             + len(self._plugin_metrics_buffer),
+            "n_moe_rows": len(self._moe_rows) + len(self._moe_buffer),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         with self._fs.open(self._manifest_path(), "wb") as f:
@@ -210,6 +223,8 @@ class RemoteWriter:
                 writer.write_batch(_make_layer_batch(rows))
             elif schema == PLUGIN_METRICS_SCHEMA:
                 writer.write_batch(_make_plugin_metrics_batch(rows))
+            elif schema == MOE_SCHEMA:
+                writer.write_batch(_make_moe_batch(rows))
             else:
                 raise ValueError(f"Unsupported schema {schema}")
         return bio.getvalue()
@@ -226,6 +241,8 @@ class RemoteWriter:
                 writer.write_batch(_make_layer_batch(rows))
             elif schema == PLUGIN_METRICS_SCHEMA:
                 writer.write_batch(_make_plugin_metrics_batch(rows))
+            elif schema == MOE_SCHEMA:
+                writer.write_batch(_make_moe_batch(rows))
             else:
                 raise ValueError(f"Unsupported schema {schema}")
         return bio.getvalue()
@@ -265,6 +282,17 @@ class RemoteWriter:
         self._plugin_metrics_rows = rows
         self._plugin_metrics_buffer = []
         self._plugin_rows_since_write = 0
+
+    def _write_moe(self):
+        rows = self._moe_rows + self._moe_buffer
+        if not rows:
+            return
+        data = self._write_stream_bytes(MOE_SCHEMA, rows)
+        with self._fs.open(self._moe_path(), "wb") as f:
+            f.write(data)
+        self._moe_rows = rows
+        self._moe_buffer = []
+        self._moe_rows_since_write = 0
 
     # ------------------------------------------------------------------ #
     # Public append API
@@ -306,6 +334,20 @@ class RemoteWriter:
             self._plugin_rows_since_write += 1
         if self._plugin_rows_since_write >= self._config.compaction_every_n_steps:
             self._write_plugin_metrics()
+
+    def append_moe(self, step: int, block_name: str, shares: list[float]):
+        if self._closed:
+            raise RuntimeError("RemoteWriter is closed")
+        self._moe_buffer.append(
+            {
+                "step": step,
+                "block": block_name,
+                "shares": [float(s) for s in shares],
+            }
+        )
+        self._moe_rows_since_write += 1
+        if self._moe_rows_since_write >= self._config.compaction_every_n_steps:
+            self._write_moe()
 
     # ------------------------------------------------------------------ #
     # Spike windows
@@ -381,6 +423,7 @@ class RemoteWriter:
         for layer_name in list(self._layer_buffers.keys()):
             self._write_layer(layer_name)
         self._write_plugin_metrics()
+        self._write_moe()
         self._write_manifest()
         logger.debug("Flushed remote writer for %s", self._uri)
 

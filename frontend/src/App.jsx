@@ -12,6 +12,7 @@ import { NAV_ITEMS } from './navigation.js'
 const Runs = lazy(() => import('./views/Runs.jsx'))
 const Timeline = lazy(() => import('./views/Timeline.jsx'))
 const LayerDrilldown = lazy(() => import('./views/LayerDrilldown.jsx'))
+const ExpertUtilization = lazy(() => import('./views/ExpertUtilization.jsx'))
 const DiffView = lazy(() => import('./views/DiffView.jsx'))
 const SpikeInspector = lazy(() => import('./views/SpikeInspector.jsx'))
 
@@ -19,6 +20,7 @@ const VIEW_COMPONENTS = {
   runs: Runs,
   timeline: Timeline,
   layers: LayerDrilldown,
+  moe: ExpertUtilization,
   diff: DiffView,
   spikes: SpikeInspector,
 }
@@ -52,6 +54,7 @@ export default function App() {
       3: () => setActiveTab(2),
       4: () => setActiveTab(3),
       5: () => setActiveTab(4),
+      6: () => setActiveTab(5),
       ArrowLeft: () => setActiveTab((i) => Math.max(0, i - 1)),
       ArrowRight: () => setActiveTab((i) => Math.min(NAV_ITEMS.length - 1, i + 1)),
       r: () => refresh(),
