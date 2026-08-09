@@ -33,7 +33,7 @@ pip install trainscope
 Loss spikes in large language model training are expensive. Existing tools log aggregates; trainscope logs the *mechanism*:
 
 - **CUSUM Change-Point Detection**: Catches subtle, persistent loss drifts ($0.10\sigma - 0.25\sigma$ per step). Verified on real training: in an organic mini-GPT-2/wikitext-2 loss explosion, CUSUM fired 9–11 steps (mean 9.7) before the loss diverged (see `scripts/verify_cusum_early_warning.py`).
-- **Activation kurtosis**: Rises 1–5 steps before catastrophic loss explosion.
+- **Activation kurtosis**: Excess kurtosis of per-block activations rises before divergence. Verified on the same organic mini-GPT-2/wikitext-2 scenario as the CUSUM claim: kurtosis crossed its robust baseline margin 14–18 steps (mean 16.7) before loss divergence — *earlier* than CUSUM's 9–11 step detection (see `scripts/verify_kurtosis_early_warning.py`). Note this supersedes the earlier "1–5 steps" estimate, which was not reproduced; kurtosis leads by more than CUSUM, not less.
 - **Chronological Spike Story Cascade**: Traces failure cascades chronologically (`Loss Shift` → `Gradient Explosion` → `NaN Collapse`) to isolate root causes instead of terminal symptoms.
 - **Gradient L2 norms**: Per-layer breakdowns show exactly which transformer block initiated the update instability.
 - **WandB Zero-Config Integration**: Auto-detects active `wandb.run` sessions for passive logging, with opt-in alerting (`integrations={"wandb": {"alerts": True}}`).
