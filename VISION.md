@@ -78,6 +78,25 @@ This decides what v1.4.0 must build: an expert-utilization detector that
 measures routing concentration drift, and a UI panel showing per-expert
 share over time.
 
+**Empirical status (v1.5.0 prep).** The addressor-collapse claim — the
+memory-augmented sibling — has been tested the same way via
+`scripts/verify_addressor_collapse_signal.py` (mini memory-augmented
+transformer, 16 soft-addressed slots, wikitext-2). Result is **positive**:
+
+- **Addressor concentration is a real early warning**: in the organic
+  LR-ramp divergence, mean max-slot addressing share exceeded 0.6 durably
+  7–11 steps (mean 9.3) before the loss exploded, in 3/3 seeds; the stable
+  control produced zero collapses in 3/3 seeds (max share 0.24–0.32 — the
+  model keeps using the bank diffusely).
+- Concentration magnitude matches the MoE finding: healthy runs spread
+  addressing across the bank, diverging runs lock onto one slot before the
+  loss follows.
+
+This is the second architecture-class signal verified with the same
+methodology. If and when addressor-aware diagnostics are built, they should
+key on slot-share concentration (like the MoE detector), not on unused
+slots — the MoE experiment already showed abandonment is normal behavior.
+
 ### Phase 3 — "Can trainscope defend itself?"
 
 This is not a feature but a maturity test: is 1.0's stability promise really
