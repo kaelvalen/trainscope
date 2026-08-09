@@ -491,3 +491,52 @@ class TestExpertUtilizationDriftDetector:
         det = make_detector(cfg)
         assert isinstance(det, ExpertUtilizationDriftDetector)
         assert det.threshold == 0.9
+
+
+class TestAddressorConcentrationDriftDetector:
+    def test_defaults_follow_experiment_threshold(self):
+        from trainscope.core.detectors.addressor_concentration import (
+            AddressorConcentrationDriftDetector,
+        )
+
+        det = AddressorConcentrationDriftDetector()
+        assert det.threshold == 0.6  # "control max + margin" from v1.4.1
+        assert det.run_steps == 3
+
+    def test_concentration_triggers_at_0_6(self):
+        from trainscope.core.detectors.addressor_concentration import (
+            AddressorConcentrationDriftDetector,
+        )
+
+        det = AddressorConcentrationDriftDetector(min_observations=5)
+        for _ in range(5):
+            det.update(0.25)
+        assert det.update(0.7) is None
+        assert det.update(0.7) is None
+        score = det.update(0.7)
+        assert score is not None
+        assert score == 0.7
+
+    def test_healthy_diffuse_addressing_never_triggers(self):
+        from trainscope.core.detectors.addressor_concentration import (
+            AddressorConcentrationDriftDetector,
+        )
+
+        det = AddressorConcentrationDriftDetector(min_observations=5)
+        triggers = 0
+        for _ in range(200):
+            # 16-slot healthy addressing: max share 0.24-0.32.
+            if det.update(0.25 + (_ % 3) * 0.03) is not None:
+                triggers += 1
+        assert triggers == 0
+
+    def test_factory_registers_detector(self):
+        from trainscope.core.config import TrainScopeConfig
+        from trainscope.core.detectors import make_detector
+        from trainscope.core.detectors.addressor_concentration import (
+            AddressorConcentrationDriftDetector,
+        )
+
+        cfg = TrainScopeConfig(detector={"name": "addressor_concentration_drift"})
+        det = make_detector(cfg)
+        assert isinstance(det, AddressorConcentrationDriftDetector)

@@ -100,9 +100,12 @@ transformer, 16 soft-addressed slots, wikitext-2). Result is **positive**:
   concentration is the signal.
 
 This is the second architecture-class signal verified with the same
-methodology. If and when addressor-aware diagnostics are built, they should
-key on slot-share concentration (like the MoE detector), not on unused
-slots.
+methodology. The verified signal is now production code (v1.5.0): the
+`addressor_concentration_drift` detector joins the family (default
+threshold 0.6 — the experiment's "control max + margin" rule), and the
+Routing & addressing view renders per-slot shares for addressor blocks
+alongside per-expert shares for routers. The detector keys on slot
+concentration, not on unused slots.
 
 ### Phase 3 — "Can trainscope defend itself?"
 
