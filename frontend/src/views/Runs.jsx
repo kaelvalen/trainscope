@@ -9,10 +9,10 @@ import { ChartCard } from '../components/ui/ChartCard.jsx'
 import { Skeleton } from '../components/ui/Skeleton.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import Chart from '../components/Chart.jsx'
-import { FolderKanban, GitCompare, TrendingUp, Zap } from 'lucide-react'
+import { FolderKanban, GitCompare, Layers, TrendingUp, Zap } from 'lucide-react'
 import { cn } from '../utils.js'
 import { CHART_COLORS } from '../theme.js'
-import { fetchCompare } from '../api.js'
+import { fetchCompare, fetchClusters } from '../api.js'
 
 function formatTime(iso) {
   if (!iso) return '—'
@@ -37,6 +37,22 @@ export default function Runs() {
   const [compareData, setCompareData] = useState(null)
   const [comparing, setComparing] = useState(false)
   const [compareError, setCompareError] = useState(null)
+  const [clusters, setClusters] = useState(null)
+  const [clusterError, setClusterError] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    fetchClusters()
+      .then((data) => {
+        if (!cancelled) setClusters(data)
+      })
+      .catch((err) => {
+        if (!cancelled) setClusterError(err?.message || 'Failed to cluster runs.')
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const sortedRuns = useMemo(
     () => [...runs].sort((a, b) => (b.start_time ?? '').localeCompare(a.start_time ?? '')),
@@ -104,6 +120,69 @@ export default function Runs() {
           icon={TrendingUp}
         />
       </div>
+
+      {clusterError && <ErrorMessage message={clusterError} />}
+
+      {clusters && clusters.clusters?.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <span className="metric-card__icon" aria-hidden="true">
+                <Layers className="h-3.5 w-3.5" />
+              </span>
+              Run behavior clusters
+            </CardTitle>
+            <p className="chart-card__description">
+              Runs grouped by which early-warning signal fired first (v1.6.0 cascade: activation →
+              gradient → routing → loss). Click a cluster to open its runs.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {clusters.clusters.map((cluster) => (
+              <div
+                key={cluster.label}
+                className="rounded-lg border border-border bg-background p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="accent">{cluster.label}</Badge>
+                    <span className="text-xs text-muted">{cluster.n_runs} runs</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {cluster.fired_signals.map((signal) => (
+                      <Badge key={signal} variant="muted">
+                        {signal}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {cluster.runs.map((name) => (
+                    <Button
+                      key={name}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => switchRun(name)}
+                      className={cn(
+                        'font-mono text-xs',
+                        name === activeRunName && 'border border-accent/60 text-accent'
+                      )}
+                    >
+                      {name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            ))}
+            {clusters.unclustered?.length > 0 && (
+              <p className="text-xs text-muted">
+                {clusters.unclustered.length} run(s) without signal data:
+                {clusters.unclustered.join(', ')}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="control-card">
         <CardHeader>

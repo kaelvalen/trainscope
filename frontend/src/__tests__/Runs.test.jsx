@@ -53,6 +53,7 @@ function mockFetch(payloads = {}) {
             '/api/layers': [],
             '/api/spikes': [],
             '/api/runs': RUNS,
+            '/api/cluster': { clusters: [], unclustered: [] },
           }[path]
     return {
       ok: true,
@@ -111,6 +112,7 @@ describe('Runs view', () => {
         '/api/layers': [],
         '/api/spikes': [],
         '/api/runs': RUNS,
+        '/api/cluster': { clusters: [], unclustered: [] },
       }[path]
       return { ok: true, json: async () => payload }
     })
@@ -179,6 +181,7 @@ describe('Runs view', () => {
         '/api/layers': [],
         '/api/spikes': [],
         '/api/runs': RUNS,
+        '/api/cluster': { clusters: [], unclustered: [] },
       }[path]
       return { ok: true, json: async () => payload }
     })
@@ -209,5 +212,55 @@ describe('Runs view', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('config.full_resolution_window')).toBeInTheDocument()
     expect(screen.getByText('1000')).toBeInTheDocument()
+  })
+})
+
+describe('Runs view clusters', () => {
+  beforeEach(() => {
+    MockWebSocket.instances = []
+    globalThis.WebSocket = MockWebSocket
+    globalThis.fetch = vi.fn(async (url) => {
+      const path = new URL(url, window.location.origin).pathname
+      const payload = {
+        '/api/meta': { model_name: 'MiniGPT', trainscope_config: { run_name: 'run_a' } },
+        '/api/global': [],
+        '/api/layers': [],
+        '/api/spikes': [],
+        '/api/runs': RUNS,
+        '/api/cluster': {
+          clusters: [
+            {
+              label: 'gradient-led',
+              first_signal: 'grad_norm',
+              fired_signals: ['grad_norm'],
+              runs: ['run_a', 'run_b'],
+              n_runs: 2,
+            },
+          ],
+          unclustered: [],
+        },
+      }
+      return { ok: true, json: async () => payload[path] }
+    })
+  })
+
+  afterEach(() => {
+    delete globalThis.WebSocket
+    delete globalThis.fetch
+  })
+
+  it('renders behavior clusters with run buttons', async () => {
+    render(
+      <ToastProvider>
+        <RunProvider>
+          <Runs />
+        </RunProvider>
+      </ToastProvider>
+    )
+    await waitFor(() => expect(screen.getByText('gradient-led')).toBeInTheDocument())
+    expect(
+      screen.getByText((content) => content.includes('Run behavior clusters'))
+    ).toBeInTheDocument()
+    expect(screen.getByText('2 runs')).toBeInTheDocument()
   })
 })
