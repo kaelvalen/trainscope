@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.6.0] - Signal Ordering
 
 ### Added
 - `scripts/verify_signal_ordering.py`: empirical check of signal ordering — do the four verified early-warning signals predict each other? All four (loss CUSUM, activation kurtosis, gradient norm, routing concentration) were measured in the same organic LR-ramp run on a hybrid MoE+memory transformer (wikitext-2). Result: the order is **consistent across 3/3 seeds** — kurtosis fires first (lead 29–36 steps), then gradient norm (22–24), then routing concentration (8–22), then loss CUSUM last (7–10). There is a mechanical cascade: activation distribution degrades, gradients grow, routing concentrates, loss CUSUM fires. This confirms the earlier single-run kurtosis-before-CUSUM observation was not a coincidence. VISION.md updated with the ordering and its UI implication (Spike Inspector should present signals in this order).
