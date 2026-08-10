@@ -210,6 +210,10 @@ export async function fetchCompare(runNames) {
   return request(`/compare?runs=${encodeURIComponent(runNames.join(','))}`)
 }
 
+export async function fetchClusters() {
+  return request('/cluster')
+}
+
 export async function selectRun(name) {
   if (!name) throw new ApiError('Run name is required')
   return request('/runs/select', {

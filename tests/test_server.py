@@ -751,3 +751,119 @@ class TestCompareConcentration:
         data = client.get("/api/compare", params={"runs": "run_a,run_b"}).json()
         assert data["concentration_series"]["run_a"] == []
         assert not any(c["field"] == "max routing concentration" for c in data["common_cause"])
+
+
+class TestCluster:
+    def _write_layer_kurtosis(self, path, values):
+        layers_dir = path / "layers"
+        layers_dir.mkdir(exist_ok=True)
+        rows = []
+        for i, k in enumerate(values):
+            rows.append(
+                {
+                    "step": i,
+                    "grad_l2_norm": 1.0,
+                    "weight_l2_norm": 1.0,
+                    "act_mean": 0.0,
+                    "act_std": 1.0,
+                    "act_max_abs": 1.0,
+                    "act_kurtosis": k,
+                    "grad_nan_inf_ratio": 0.0,
+                    "hist_counts": [],
+                    "hist_edges": [],
+                    "grad_max_abs": 1.0,
+                    "grad_mean": 0.0,
+                    "weight_mean": 0.0,
+                    "weight_std": 1.0,
+                    "weight_max_abs": 1.0,
+                    "weight_min": -1.0,
+                    "act_min": -1.0,
+                    "act_max": 1.0,
+                    "act_median": 0.0,
+                }
+            )
+        _write_arrow(layers_dir / "layer0.arrow", LAYER_SCHEMA, rows)
+
+    def _write_run(self, root, name, grad_spike=False, kurtosis_spike=False, loss_spike=False):
+        path = root / name
+        path.mkdir()
+        path.joinpath("meta.json").write_text(
+            json.dumps(
+                {
+                    "model_name": "M",
+                    "model_config": {},
+                    "trainscope_config": {
+                        "run_name": name,
+                        "full_resolution_window": 500,
+                        "detector": {"name": "changepoint", "threshold": 6.0},
+                    },
+                }
+            )
+        )
+        rows = []
+        for i in range(80):
+            loss = 1.0
+            grad = 1.0
+            if loss_spike and i == 60:
+                loss = 100.0
+            if grad_spike and i >= 40:
+                grad = 50.0
+            rows.append(
+                {
+                    "step": i,
+                    "loss": loss,
+                    "grad_norm_before_clip": grad,
+                    "grad_norm_after_clip": grad,
+                    "lr": 0.001,
+                    "optimizer_v_norm": 0.0,
+                    "step_time_ms": 1.0,
+                    "batch_index": i,
+                    "is_spike": loss_spike and i == 60,
+                    "cpu_memory_mb": 0.0,
+                    "cuda_memory_mb": 0.0,
+                }
+            )
+        _write_arrow(path / "global.arrow", GLOBAL_SCHEMA, rows)
+        if loss_spike:
+            spikes = path / "spikes"
+            spikes.mkdir()
+            _write_arrow(spikes / "spike_step_60.arrow", GLOBAL_SCHEMA, [rows[60]])
+
+        if kurtosis_spike:
+            self._write_layer_kurtosis(path, [0.2] * 40 + [3.0] * 40)
+        else:
+            self._write_layer_kurtosis(path, [0.2] * 80)
+        return path
+
+    def test_cluster_groups_by_signal_signature(self, tmp_path):
+        root = tmp_path / "cl"
+        root.mkdir()
+        # Two gradient-led runs (grad spike, no loss spike), one loss-led.
+        self._write_run(root, "grad_a", grad_spike=True)
+        self._write_run(root, "grad_b", grad_spike=True)
+        self._write_run(root, "loss_c", loss_spike=True)
+        self._write_run(root, "calm_d")
+
+        client = TestClient(create_app(str(root / "grad_a"), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+
+        clusters = {c["label"]: c for c in data["clusters"]}
+        assert "gradient-led" in clusters
+        assert set(clusters["gradient-led"]["runs"]) == {"grad_a", "grad_b"}
+        assert "loss-led" in clusters
+        assert clusters["loss-led"]["runs"] == ["loss_c"]
+        assert "no-signal" in clusters or "calm_d" in data["unclustered"]
+
+    def test_cluster_requires_multi_run_mode(self, client):
+        assert client.get("/api/cluster").status_code == 404
+
+    def test_cluster_detects_kurtosis_led(self, tmp_path):
+        root = tmp_path / "clk"
+        root.mkdir()
+        self._write_run(root, "kurt_a", kurtosis_spike=True)
+        self._write_run(root, "calm_b")
+
+        client = TestClient(create_app(str(root / "kurt_a"), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+        labels = {c["label"] for c in data["clusters"]}
+        assert "activation-led" in labels
