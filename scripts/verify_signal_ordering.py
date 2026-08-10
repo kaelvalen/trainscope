@@ -18,11 +18,23 @@ per seed:
 
 Signals measured per step:
   - loss CUSUM: the real ChangePointDetector (threshold 6.0, slack 1.0)
-  - activation kurtosis: excess kurtosis of block outputs (baseline
-    median + 3*MAD, same rule as verify_kurtosis_early_warning.py)
+  - activation kurtosis: excess kurtosis of block *outputs* (baseline
+    median + 3*MAD, same metric as production's act_kurtosis) — NOT a
+    weight kurtosis. An earlier version measured kurtosis of the attention
+    projection *weights*, which is a different physical quantity; with the
+    correct activation metric the ordering claim does not reproduce (see
+    below).
   - gradient norm: L2 norm of all grads (baseline median + 3*MAD)
   - routing concentration: max expert share (threshold 0.85, same as the
     MoE experiment)
+
+Result (v1.7.0 re-run, activation kurtosis): the order is NOT consistent
+across seeds. The only stable finding is that loss CUSUM always fires
+LAST (lead 7-10, 3/3 seeds). The relative order of kurtosis, gradient
+norm, and concentration varies by seed, so there is no single mechanical
+cascade to anchor a UI "primary alarm" — the earlier weight-kurtosis
+version appeared to show one, but that metric is not what production
+records.
 
 If the order is consistent across seeds (e.g. kurtosis always precedes
 CUSUM), that supports a mechanical cascade and suggests the UI's Spike
@@ -145,7 +157,7 @@ class HybridBlock(nn.Module):
         # Memory read.
         weights = F.softmax(self.addressor(self.ln3(x)), dim=-1)
         x = x + self.memory.read(weights)
-        return x, probs.detach().cpu().numpy()
+        return x, probs.detach().cpu().numpy(), x.detach()
 
 
 class HybridLM(nn.Module):
@@ -167,11 +179,13 @@ class HybridLM(nn.Module):
         pos = torch.arange(T, device=x.device).unsqueeze(0)
         h = self.tok_emb(x) + self.pos_emb(pos)
         routing = []
+        activations = []
         for block in self.blocks:
-            h, probs = block(h)
+            h, probs, block_out = block(h)
             routing.append(probs)
+            activations.append(block_out)
         h = self.ln_f(h)
-        return self.head(h), routing
+        return self.head(h), routing, activations
 
 
 def load_wikitext_chars(path, max_chars=600_000):
@@ -234,14 +248,18 @@ def train(seed, vocab, tokens, scenario, n_steps=N_STEPS):
                 group["lr"] = BASE_LR * multiplier
 
         optimizer.zero_grad()
-        logits, routing = model(x)
+        logits, routing, activations = model(x)
         loss = F.cross_entropy(logits.view(-1, vocab), y.view(-1))
         loss.backward()
         gn = sum(p.grad.norm().item() ** 2 for p in model.parameters() if p.grad is not None) ** 0.5
         optimizer.step()
 
         losses.append(loss.item())
-        kurtosis.append(max(excess_kurtosis(b.attn.proj.weight) for b in model.blocks))
+        # Activation kurtosis of block outputs — the same metric production
+        # records as act_kurtosis (compute_activation_metrics), not a weight
+        # kurtosis. This keeps the ordering claim comparable to the original
+        # verify_kurtosis_early_warning.py experiment.
+        kurtosis.append(max(excess_kurtosis(act) for act in activations))
         grad_norms.append(gn)
         shares = []
         for probs in routing:

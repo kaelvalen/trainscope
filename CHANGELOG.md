@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Run clustering now orders signals chronologically, not by code order.** `/api/cluster` previously chose a run's "first" signal by the order the code checked them (grad_norm → loss → kurtosis → concentration), not by actual crossing step — so a run where kurtosis fired at step 30 and grad norm at step 50 could be mislabeled "gradient-led". `_signal_crossing` now returns the crossing step (not a bool) and the first signal is the one with the minimum crossing step, mirroring the experiment's `analyze()`. Added a regression test with two fired signals in one run where chronological order differs from code order.
+- **Signal-ordering claim corrected: kurtosis measurement used weights, not activations.** The v1.6.0 `verify_signal_ordering.py` measured kurtosis of the attention projection *weights*; production's `act_kurtosis` (and the original kurtosis experiment) measures *activation* kurtosis. Re-running with the correct activation metric, the "consistent mechanical cascade (kurtosis first)" result does NOT reproduce: the order varies across seeds (3 distinct orders in 3/3). The one stable finding is that loss CUSUM always fires last (lead 7–10). VISION.md updated: no signal is promoted to primary-alarm status; the Spike Inspector implication is withdrawn. Production `/api/cluster` already read the correct `act_kurtosis` source, so it was unaffected by the experiment's metric error.
+
 ## [1.7.0] - Run Behavior Clustering
 
 ### Added

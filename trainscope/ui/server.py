@@ -544,28 +544,32 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
     # ------------------------------------------------------------------ #
     # Run clustering (signal signatures)
     # ------------------------------------------------------------------ #
-    def _signal_crossing(values: list[float]) -> bool:
-        """True when ``values`` durably crosses baseline median + 3*MAD.
+    def _first_crossing_step(values: list[float]) -> int | None:
+        """Step index where ``values`` durably crosses baseline median + 3*MAD.
 
         Baseline is the first 40 samples (warmup), the crossing must hold for
         3 consecutive steps — the same robust rule used across all four
-        verification experiments.
+        verification experiments. Returns the step index of the first
+        crossing (i.e. the step where the 3-step run began), or None when
+        the signal never crosses. The step index — not a boolean — is what
+        lets clustering order signals chronologically.
         """
         if len(values) < 50:
-            return False
+            return None
         base = values[:40]
         med = sorted(base)[len(base) // 2]
         mad = sorted(abs(v - med) for v in base)[len(base) // 2]
         threshold = med + 3.0 * mad
         run = 0
-        for v in values[40:]:
+        for i in range(40, len(values)):
+            v = values[i]
             if math.isfinite(v) and v > threshold:
                 run += 1
             else:
                 run = 0
             if run >= 3:
-                return True
-        return False
+                return i - run + 1
+        return None
 
     async def _run_signal_signature(run_dir: Path) -> dict[str, Any]:
         """Which early-warning signals fired in this run, and which fired first.
@@ -573,33 +577,33 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         Mirrors the v1.6.0 cascade ordering (kurtosis -> grad norm ->
         concentration -> loss CUSUM): each signal is tested with the same
         robust crossing rule, and the run's *first* signal anchors its
-        cluster label.
+        cluster label. The first signal is the one with the earliest
+        crossing step — chronological, not code-order.
         """
-        signals: dict[str, bool] = {}
-        order: list[str] = []
+        fired: dict[str, int] = {}
         global_rows = await _read_arrow(run_dir / "global.arrow")
         if global_rows:
             grad_norms = [r.get("grad_norm_before_clip") for r in global_rows]
             if any(v is not None for v in grad_norms):
-                fired = _signal_crossing([v or 0.0 for v in grad_norms])
-                signals["grad_norm"] = fired
-                order.append("grad_norm")
+                step = _first_crossing_step([v or 0.0 for v in grad_norms])
+                if step is not None:
+                    fired["grad_norm"] = step
 
             # Loss signal: a spike recorded by the detector (or a 10x loss jump
             # in the last row, which is what the objective explosion definition
             # uses across the experiments).
             spikes = await _get_spike_steps(run_dir)
-            loss_fired = len(spikes) > 0
-            if global_rows:
+            if spikes:
+                fired["loss"] = min(spikes)
+            elif global_rows:
                 last_loss = global_rows[-1].get("loss")
-                if last_loss is not None:
+                last_step = global_rows[-1].get("step")
+                if last_loss is not None and last_step is not None:
                     base_mean = sum((r.get("loss") or 0.0) for r in global_rows[:40]) / min(
                         40, len(global_rows)
                     )
                     if base_mean > 0 and last_loss > 10.0 * base_mean:
-                        loss_fired = True
-            signals["loss"] = loss_fired
-            order.append("loss")
+                        fired["loss"] = int(last_step)
 
         # Kurtosis from layer arrows (act_kurtosis, when recorded).
         kurtosis_values: list[float] = []
@@ -613,8 +617,9 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                     kurtosis_values = [v or 0.0 for v in values]
                     break
         if kurtosis_values:
-            signals["kurtosis"] = _signal_crossing(kurtosis_values)
-            order.append("kurtosis")
+            step = _first_crossing_step(kurtosis_values)
+            if step is not None:
+                fired["kurtosis"] = step
 
         # Concentration from moe.arrow.
         moe_rows = await _read_arrow(run_dir / "moe.arrow")
@@ -626,14 +631,16 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 if shares and step is not None:
                     by_step[step] = max(by_step.get(step, 0.0), max(shares))
             concentration_values = [by_step[s] for s in sorted(by_step)]
-            signals["concentration"] = _signal_crossing(concentration_values)
-            order.append("concentration")
+            step = _first_crossing_step(concentration_values)
+            if step is not None:
+                fired["concentration"] = step
 
-        fired_names = [name for name in order if signals[name]]
+        # Chronological order: earliest crossing step first.
+        fired_names = sorted(fired, key=lambda name: fired[name])
         return {
-            "signals": signals,
             "fired": fired_names,
             "first": fired_names[0] if fired_names else None,
+            "first_steps": fired,
         }
 
     @app.get("/api/cluster")
@@ -653,7 +660,7 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         unclustered: list[str] = []
         for run_dir in _discover_run_dirs(rr):
             sig = await _run_signal_signature(run_dir)
-            if not sig["signals"]:
+            if not sig["fired"]:
                 unclustered.append(run_dir.name)
                 continue
             key = (tuple(sig["fired"]), sig["first"])
