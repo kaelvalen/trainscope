@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.7.2] - Cluster Lead & Vision Review
 
 ### Added
 - **Cluster typical early-warning lead.** `/api/cluster` now reports `typical_lead_steps` per cluster — the median time between the first signal's crossing and the objective explosion step (loss > 10x baseline or non-finite) across the cluster's runs. The Runs view's cluster card shows it as a `~N-step lead` badge, answering "how much warning does this failure mode give" alongside "which runs share it".
