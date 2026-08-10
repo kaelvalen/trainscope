@@ -436,6 +436,26 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
 
         divergence = await _find_divergence_step(series)
 
+        # Routing/addressing concentration series per run (MoE & addressor):
+        # per step, the max share across all recorded blocks. This is the
+        # architecture-aware detector's signal, so multi-run comparison can
+        # ask "which runs concentrated" — not just "which runs blew up".
+        concentration_series: dict[str, list[dict[str, Any]]] = {}
+        for n in names:
+            moe_rows = await _read_arrow(by_name[n] / "moe.arrow")
+            by_step: dict[int, float] = {}
+            for row in moe_rows:
+                shares = row.get("shares") or []
+                if shares:
+                    step = row.get("step")
+                    if step is not None:
+                        by_step[step] = max(by_step.get(step, 0.0), max(shares))
+            steps = sorted(by_step)
+            if len(steps) > max_points:
+                stride = len(steps) / max_points
+                steps = [s for i, s in enumerate(steps) if i % max(1, int(stride)) == 0]
+            concentration_series[n] = [{"step": s, "max_share": by_step[s]} for s in steps]
+
         # Config diff: fields whose value differs across the selected runs.
         flat_by_name = {n: _flatten_config(meta_by_name[n]) for n in names}
         all_keys = sorted({k for f in flat_by_name.values() for k in f})
@@ -472,6 +492,45 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 if len(common_cause) >= 5:
                     break
 
+            # Runtime signal: routing/addressing concentration. A run whose
+            # peak max-share crossed the detector's configured threshold (or
+            # the family default for its detector) counts as "concentrated".
+            # If every spiked run concentrated and no stable run did, report
+            # it as a common cause.
+            def _concentration_threshold(meta: dict[str, Any]) -> float | None:
+                det = (meta.get("trainscope_config") or {}).get("detector") or {}
+                if not isinstance(det, dict):
+                    return None
+                thr = det.get("threshold")
+                if thr is not None:
+                    return float(thr)
+                name = det.get("name")
+                if name == "expert_utilization_drift":
+                    return 0.85
+                if name == "addressor_concentration_drift":
+                    return 0.6
+                return None
+
+            conc_peak = {
+                n: max((row["max_share"] for row in concentration_series[n]), default=0.0)
+                for n in names
+            }
+            thresholds = {n: _concentration_threshold(meta_by_name[n]) for n in names}
+            if any(t is not None for t in thresholds.values()) and any(conc_peak.values()):
+                spiked_conc = {n: conc_peak[n] for n in spiked}
+                stable_conc = {n: conc_peak[n] for n in stable}
+                # Only report when the groups separate cleanly.
+                min_spiked = min(spiked_conc.values()) if spiked_conc else 0.0
+                max_stable = max(stable_conc.values()) if stable_conc else 0.0
+                if min_spiked > max_stable:
+                    common_cause.append(
+                        {
+                            "field": "max routing concentration",
+                            "spiked_value": round(min_spiked, 3),
+                            "stable_value": round(max_stable, 3),
+                        }
+                    )
+
         return {
             "runs": [s["name"] for s in summaries],
             "summaries": summaries,
@@ -479,6 +538,7 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
             "divergence": divergence,
             "config_diff": differing,
             "common_cause": common_cause,
+            "concentration_series": concentration_series,
         }
 
     @app.get("/api/manifest")

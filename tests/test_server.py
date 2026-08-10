@@ -629,3 +629,125 @@ class TestCompare:
         client = TestClient(create_app(str(root / "run_a"), runs_root=str(root)))
         r = client.get("/api/compare", params={"runs": "run_a"})
         assert r.status_code == 400
+
+
+class TestCompareConcentration:
+    def test_compare_includes_concentration_series_and_common_cause(self, tmp_path):
+        from trainscope.io.writer import MOE_SCHEMA
+
+        root = tmp_path / "moecmp"
+        root.mkdir()
+
+        def write_run(name, spike, peak_share, det_name):
+            path = root / name
+            path.mkdir()
+            path.joinpath("meta.json").write_text(
+                json.dumps(
+                    {
+                        "model_name": "MoE",
+                        "model_config": {},
+                        "trainscope_config": {
+                            "run_name": name,
+                            "full_resolution_window": 500,
+                            "detector": {"name": det_name, "threshold": 0.85},
+                        },
+                    }
+                )
+            )
+            rows = []
+            for i in range(40):
+                loss = 1.0
+                if spike and i == 30:
+                    loss = 100.0
+                rows.append(
+                    {
+                        "step": i,
+                        "loss": loss,
+                        "grad_norm_before_clip": 1.0,
+                        "grad_norm_after_clip": 1.0,
+                        "lr": 0.001,
+                        "optimizer_v_norm": 0.0,
+                        "step_time_ms": 1.0,
+                        "batch_index": i,
+                        "is_spike": spike and i == 30,
+                        "cpu_memory_mb": 0.0,
+                        "cuda_memory_mb": 0.0,
+                    }
+                )
+            _write_arrow(path / "global.arrow", GLOBAL_SCHEMA, rows)
+            path.joinpath("manifest.json").write_text(
+                json.dumps({"last_step": 39, "n_global_rows": 40})
+            )
+            if spike:
+                spikes = path / "spikes"
+                spikes.mkdir()
+                _write_arrow(spikes / "spike_step_30.arrow", GLOBAL_SCHEMA, [rows[30]])
+
+            # MoE routing: shares over 4 experts; concentrate (0.95) on spike
+            # runs, diffuse (0.30) on stable runs.
+            moe_rows = []
+            for i in range(40):
+                if spike and i >= 25:
+                    shares = [0.95, 0.02, 0.02, 0.01]
+                else:
+                    shares = [0.30, 0.30, 0.25, 0.15]
+                moe_rows.append({"step": i, "block": "blocks.0.router", "shares": shares})
+            _write_arrow(path / "moe.arrow", MOE_SCHEMA, moe_rows)
+
+        write_run("moe_spike", spike=True, peak_share=0.95, det_name="expert_utilization_drift")
+        write_run("moe_ok", spike=False, peak_share=0.30, det_name="expert_utilization_drift")
+
+        client = TestClient(create_app(str(root / "moe_spike"), runs_root=str(root)))
+        data = client.get("/api/compare", params={"runs": "moe_spike,moe_ok"}).json()
+
+        assert "concentration_series" in data
+        assert data["concentration_series"]["moe_spike"][-1]["max_share"] == 0.95
+        assert data["concentration_series"]["moe_ok"][-1]["max_share"] == 0.30
+
+        causes = {c["field"]: c for c in data["common_cause"]}
+        assert "max routing concentration" in causes
+        assert causes["max routing concentration"]["spiked_value"] == 0.95
+        assert causes["max routing concentration"]["stable_value"] == 0.30
+
+    def test_compare_concentration_absent_for_non_moe_runs(self, tmp_path):
+        root = tmp_path / "nonmoe"
+        root.mkdir()
+        for name in ("run_a", "run_b"):
+            path = root / name
+            path.mkdir()
+            path.joinpath("meta.json").write_text(
+                json.dumps(
+                    {
+                        "model_name": "M",
+                        "model_config": {},
+                        "trainscope_config": {
+                            "run_name": name,
+                            "detector": {"name": "changepoint"},
+                        },
+                    }
+                )
+            )
+            _write_arrow(
+                path / "global.arrow",
+                GLOBAL_SCHEMA,
+                [
+                    {
+                        "step": i,
+                        "loss": 1.0,
+                        "grad_norm_before_clip": 1.0,
+                        "grad_norm_after_clip": 1.0,
+                        "lr": 0.001,
+                        "optimizer_v_norm": 0.0,
+                        "step_time_ms": 1.0,
+                        "batch_index": i,
+                        "is_spike": False,
+                        "cpu_memory_mb": 0.0,
+                        "cuda_memory_mb": 0.0,
+                    }
+                    for i in range(20)
+                ],
+            )
+        client = TestClient(create_app(str(root / "run_a"), runs_root=str(root)))
+        data = client.get("/api/compare", params={"runs": "run_a,run_b"}).json()
+        assert data["concentration_series"]["run_a"] == []
+        assert not any(c["field"] == "max routing concentration" for c in data["common_cause"])

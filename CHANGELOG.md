@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Architecture-aware comparison (Phase 1 × Phase 2).** `/api/compare` now carries each run's routing/addressing concentration series (`concentration_series`, max share per step from `moe.arrow`), and the common-cause analysis includes the *runtime signal*: if every spiked run concentrated (peak max-share above the configured detector threshold) and no stable run did, a "max routing concentration" common cause is reported — answering "which runs had expert collapse" alongside "which runs blew up". The Compare panel in the Runs view adds a concentration overlay chart (per-run lines with 0.6/0.85 threshold guides) and renders the concentration common cause with dedicated wording.
 - **Addressor-concentration drift detector (Phase 2, memory-augmented).** The v1.4.1-verified signal is now production code: `{"name": "addressor_concentration_drift", ...}` joins the detector family (default threshold 0.6 — the experiment's "control max + margin" rule; fires after `run_steps` consecutive steps above it). The scope records per-slot addressing shares for any module named `addressor` (mean softmax weight per slot over tokens — matching the experiment's signal) into `moe.arrow`, and the Routing & addressing view renders per-slot share series for addressor blocks alongside per-expert series for routers. No schema change: the existing `MOE_SCHEMA` stream already carries per-block share vectors.
 
 ## [1.4.1] - Addressor-Collapse Verification
