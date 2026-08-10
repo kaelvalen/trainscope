@@ -960,7 +960,7 @@ class TestClusterChronology:
 
 class TestClusterLead:
     def test_typical_lead_uses_explosion_minus_first_crossing(self, tmp_path):
-        """Loss spike at step 60, kurtosis crossing at step 30 -> lead 30."""
+        """Loss spike at step 60, kurtosis crossing at step 45 -> lead 15."""
         root = tmp_path / "lead"
         root.mkdir()
         path = root / "run_a"
