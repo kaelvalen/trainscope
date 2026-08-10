@@ -107,6 +107,18 @@ Routing & addressing view renders per-slot shares for addressor blocks
 alongside per-expert shares for routers. The detector keys on slot
 concentration, not on unused slots.
 
+**Signal ordering (v1.6.0).** The four verified signals were measured in
+the *same* organic run (a hybrid MoE+memory transformer under the LR ramp)
+via `scripts/verify_signal_ordering.py`. The order is **consistent across
+3/3 seeds**: activation kurtosis fires first (lead 29–36 steps), then
+gradient norm (22–24), then routing concentration (8–22), and loss CUSUM
+last (7–10). The earlier single-run observation that kurtosis precedes
+CUSUM was therefore not a coincidence — there is a mechanical cascade:
+activation distribution degrades first, gradients grow, routing
+concentrates, and only then does the loss CUSUM fire. Implication for the
+UI: the Spike Inspector's cascade narrative should present signals in this
+order (kurtosis as the primary alarm, the rest as confirming evidence).
+
 ### Phase 3 — "Can trainscope defend itself?"
 
 This is not a feature but a maturity test: is 1.0's stability promise really
