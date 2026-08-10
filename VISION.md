@@ -137,17 +137,38 @@ to ask on every PR.
 ## What we will not do, deliberately
 
 A product plan matters as much for what it rejects as for what it lists.
-Two tempting but wrong directions came up in this conversation:
+Two directions were rejected early, and one more has been added since the
+first three phases shipped. All four are reviewed against the current
+state of the product (as of v1.7.x), not the original vision draft:
 
 - **Becoming CV fleet monitoring ("inferencescope").** That is a shift from
   a training-time tool to an inference-time one — it breaks the identity.
   Trainscope stays training's detective; something else can exist another
   day, under another name, as a separate project, but it never enters
-  trainscope's roadmap.
+  trainscope's roadmap. *Still rejected:* the multi-run and detector work
+  since 1.1 made trainscope more of a training forensics platform, not
+  closer to inference serving.
 - **Trying to be W&B/MLflow's general-purpose dashboard.** Phase 1
   (multi-run comparison) may look similar to them, but trainscope will never
   focus on "which run gave the best result" — it stays focused on "why did
-  this run behave this way". A case file, not a metrics chart.
+  this run behave this way". A case file, not a metrics chart. *Still
+  rejected:* the comparison and clustering features added since 1.2
+  strengthened the "why" framing (divergence points, common causes, signal
+  signatures) rather than drifting toward ranking sweeps.
+- **Promoting any single signal to "primary alarm" status.** The v1.6.0
+  signal-ordering experiment initially suggested a mechanical cascade
+  (kurtosis always first), which would have made one signal the headline
+  of the Spike Inspector. Re-measured with the correct activation-kurtosis
+  metric (v1.7.0), the order is not consistent across seeds — signals are
+  independent indicators, and CUSUM firing last is the only stable
+  finding. *Rejected on evidence:* no signal gets a privileged position;
+  all are presented as independent evidence.
+- **Adding a third architecture class without a question it answers.**
+  With three signal types verified and the ordering result showing signals
+  are independent, a fourth signal (e.g. state-space/Mamba) would not
+  automatically add explanatory power. Such an addition is only justified
+  by a concrete failure mode that existing signals cannot see — not by
+  architecture novelty alone.
 
 ## What is next
 

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Cluster typical early-warning lead.** `/api/cluster` now reports `typical_lead_steps` per cluster — the median time between the first signal's crossing and the objective explosion step (loss > 10x baseline or non-finite) across the cluster's runs. The Runs view's cluster card shows it as a `~N-step lead` badge, answering "how much warning does this failure mode give" alongside "which runs share it".
+- **VISION.md "what we will not do" reviewed.** The rejection list is now evaluated against the shipped product (v1.7.x) rather than the original draft: CV fleet monitoring and the W&B-style dashboard remain rejected (the forensics framing strengthened since 1.1/1.2), and two evidence-based rejections are added — promoting any single signal to "primary alarm" (the v1.6.0 cascade claim failed to reproduce with the correct activation-kurtosis metric, so signals stay independent evidence) and adding a third architecture class without a concrete failure mode it answers.
+
 ## [1.7.1] - Clustering Chronology & Signal-Ordering Correction
 
 ### Fixed

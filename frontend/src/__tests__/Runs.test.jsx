@@ -235,6 +235,7 @@ describe('Runs view clusters', () => {
               fired_signals: ['grad_norm'],
               runs: ['run_a', 'run_b'],
               n_runs: 2,
+              typical_lead_steps: 23.5,
             },
           ],
           unclustered: [],
@@ -262,5 +263,6 @@ describe('Runs view clusters', () => {
       screen.getByText((content) => content.includes('Run behavior clusters'))
     ).toBeInTheDocument()
     expect(screen.getByText('2 runs')).toBeInTheDocument()
+    expect(screen.getByText('~23.5-step lead')).toBeInTheDocument()
   })
 })
