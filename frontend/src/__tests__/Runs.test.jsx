@@ -154,7 +154,22 @@ describe('Runs view', () => {
             ],
             common_cause: [
               { field: 'config.detector.threshold', spiked_value: 6.0, stable_value: 3.5 },
+              {
+                field: 'max routing concentration',
+                spiked_value: 0.95,
+                stable_value: 0.3,
+              },
             ],
+            concentration_series: {
+              run_a: [
+                { step: 0, max_share: 0.3 },
+                { step: 1, max_share: 0.95 },
+              ],
+              run_b: [
+                { step: 0, max_share: 0.3 },
+                { step: 1, max_share: 0.3 },
+              ],
+            },
           }),
         }
       }
@@ -186,6 +201,11 @@ describe('Runs view', () => {
     expect(screen.getByText('Common cause')).toBeInTheDocument()
     expect(
       screen.getByText((content) => content.includes('every run with spikes has'))
+    ).toBeInTheDocument()
+    // Concentration overlay + architecture-aware common cause sentence.
+    expect(screen.getByText('Routing / addressing concentration')).toBeInTheDocument()
+    expect(
+      screen.getByText((content) => content.includes('every run with spikes concentrated'))
     ).toBeInTheDocument()
     expect(screen.getByText('config.full_resolution_window')).toBeInTheDocument()
     expect(screen.getByText('1000')).toBeInTheDocument()

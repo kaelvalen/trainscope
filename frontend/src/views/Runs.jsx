@@ -202,7 +202,14 @@ export default function Runs() {
 }
 
 function ComparePanel({ data }) {
-  const { runs: names, loss_series, divergence, config_diff, common_cause } = data
+  const {
+    runs: names,
+    loss_series,
+    divergence,
+    config_diff,
+    common_cause,
+    concentration_series,
+  } = data
   const colorByName = Object.fromEntries(
     names.map((name, i) => [name, RUN_PALETTE[i % RUN_PALETTE.length]])
   )
@@ -215,6 +222,18 @@ function ComparePanel({ data }) {
     name,
     line: { color: colorByName[name], width: 1.5 },
   }))
+
+  const hasConcentration = names.some((name) => (concentration_series?.[name]?.length ?? 0) > 0)
+  const concentrationTraces = names
+    .filter((name) => concentration_series?.[name]?.length > 0)
+    .map((name) => ({
+      x: concentration_series[name].map((row) => row.step),
+      y: concentration_series[name].map((row) => row.max_share),
+      type: 'scatter',
+      mode: 'lines',
+      name,
+      line: { color: colorByName[name], width: 1.5 },
+    }))
 
   const shapes = divergence
     ? [
@@ -257,25 +276,83 @@ function ComparePanel({ data }) {
         />
       </ChartCard>
 
+      {hasConcentration && (
+        <ChartCard
+          title="Routing / addressing concentration"
+          description="Max expert / slot share per run. A run crossing 0.6–0.85 has a concentrated router or addressor — the architecture-aware early-warning signal."
+        >
+          <Chart
+            data={concentrationTraces}
+            layout={{
+              height: 300,
+              legend: { orientation: 'h', y: -0.15 },
+              yaxis: { range: [0, 1] },
+              shapes: [
+                {
+                  type: 'line',
+                  xref: 'paper',
+                  x0: 0,
+                  x1: 1,
+                  yref: 'y',
+                  y0: 0.6,
+                  y1: 0.6,
+                  line: { color: '#f87171', width: 1, dash: 'dot' },
+                },
+                {
+                  type: 'line',
+                  xref: 'paper',
+                  x0: 0,
+                  x1: 1,
+                  yref: 'y',
+                  y0: 0.85,
+                  y1: 0.85,
+                  line: { color: '#f87171', width: 1, dash: 'dash' },
+                },
+              ],
+            }}
+          />
+        </ChartCard>
+      )}
+
       {common_cause.length > 0 && (
         <Card className="story-card">
           <CardHeader>
             <CardTitle>Common cause</CardTitle>
           </CardHeader>
           <CardContent className="space-y-2 text-xs leading-relaxed">
-            {common_cause.map((cause) => (
-              <p key={cause.field} className="rounded-md bg-background p-2">
-                <span className="font-mono">{cause.field}</span>: every run with spikes has{' '}
-                <span className="font-semibold text-danger">
-                  {JSON.stringify(cause.spiked_value)}
-                </span>
-                , every stable run has{' '}
-                <span className="font-semibold text-foreground">
-                  {JSON.stringify(cause.stable_value)}
-                </span>
-                .
-              </p>
-            ))}
+            {common_cause.map((cause) => {
+              const isConcentration = cause.field === 'max routing concentration'
+              return (
+                <p key={cause.field} className="rounded-md bg-background p-2">
+                  <span className="font-mono">{cause.field}</span>
+                  {isConcentration ? (
+                    <>
+                      : every run with spikes concentrated (peak{' '}
+                      <span className="font-semibold text-danger">
+                        {JSON.stringify(cause.spiked_value)}
+                      </span>
+                      ), every stable run stayed diffuse (peak{' '}
+                      <span className="font-semibold text-foreground">
+                        {JSON.stringify(cause.stable_value)}
+                      </span>
+                      ).
+                    </>
+                  ) : (
+                    <>
+                      : every run with spikes has{' '}
+                      <span className="font-semibold text-danger">
+                        {JSON.stringify(cause.spiked_value)}
+                      </span>
+                      , every stable run has{' '}
+                      <span className="font-semibold text-foreground">
+                        {JSON.stringify(cause.stable_value)}
+                      </span>
+                      .
+                    </>
+                  )}
+                </p>
+              )
+            })}
           </CardContent>
         </Card>
       )}
