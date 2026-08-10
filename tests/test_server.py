@@ -956,3 +956,86 @@ class TestClusterChronology:
         assert set(cluster["fired_signals"]) == {"kurtosis", "grad_norm"}
         assert cluster["first_signal"] == "kurtosis"
         assert cluster["label"] == "activation-led"
+
+
+class TestClusterLead:
+    def test_typical_lead_uses_explosion_minus_first_crossing(self, tmp_path):
+        """Loss spike at step 60, kurtosis crossing at step 30 -> lead 30."""
+        root = tmp_path / "lead"
+        root.mkdir()
+        path = root / "run_a"
+        path.mkdir()
+        path.joinpath("meta.json").write_text(
+            json.dumps(
+                {
+                    "model_name": "M",
+                    "model_config": {},
+                    "trainscope_config": {
+                        "run_name": "run_a",
+                        "full_resolution_window": 500,
+                        "detector": {"name": "changepoint", "threshold": 6.0},
+                    },
+                }
+            )
+        )
+        rows = []
+        for i in range(80):
+            loss = 100.0 if i == 60 else 1.0
+            rows.append(
+                {
+                    "step": i,
+                    "loss": loss,
+                    "grad_norm_before_clip": 1.0,
+                    "grad_norm_after_clip": 1.0,
+                    "lr": 0.001,
+                    "optimizer_v_norm": 0.0,
+                    "step_time_ms": 1.0,
+                    "batch_index": i,
+                    "is_spike": i == 60,
+                    "cpu_memory_mb": 0.0,
+                    "cuda_memory_mb": 0.0,
+                }
+            )
+        _write_arrow(path / "global.arrow", GLOBAL_SCHEMA, rows)
+        spikes = path / "spikes"
+        spikes.mkdir()
+        _write_arrow(spikes / "spike_step_60.arrow", GLOBAL_SCHEMA, [rows[60]])
+
+        # Kurtosis crosses at step 45 (earlier than the loss spike; the
+        # crossing scan only starts after the 40-sample baseline).
+        layers_dir = path / "layers"
+        layers_dir.mkdir()
+        layer_rows = []
+        for i in range(80):
+            layer_rows.append(
+                {
+                    "step": i,
+                    "grad_l2_norm": 1.0,
+                    "weight_l2_norm": 1.0,
+                    "act_mean": 0.0,
+                    "act_std": 1.0,
+                    "act_max_abs": 1.0,
+                    "act_kurtosis": 3.0 if i >= 45 else 0.2,
+                    "grad_nan_inf_ratio": 0.0,
+                    "hist_counts": [],
+                    "hist_edges": [],
+                    "grad_max_abs": 1.0,
+                    "grad_mean": 0.0,
+                    "weight_mean": 0.0,
+                    "weight_std": 1.0,
+                    "weight_max_abs": 1.0,
+                    "weight_min": -1.0,
+                    "act_min": -1.0,
+                    "act_max": 1.0,
+                    "act_median": 0.0,
+                }
+            )
+        _write_arrow(layers_dir / "layer0.arrow", LAYER_SCHEMA, layer_rows)
+
+        client = TestClient(create_app(str(path), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+        assert len(data["clusters"]) == 1
+        cluster = data["clusters"][0]
+        assert cluster["first_signal"] == "kurtosis"
+        # explosion (60) - first crossing (45) = 15.
+        assert cluster["typical_lead_steps"] == 15.0

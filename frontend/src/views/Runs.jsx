@@ -133,8 +133,9 @@ export default function Runs() {
               Run behavior clusters
             </CardTitle>
             <p className="chart-card__description">
-              Runs grouped by which early-warning signal fired first (v1.6.0 cascade: activation →
-              gradient → routing → loss). Click a cluster to open its runs.
+              Runs grouped by which early-warning signal fired first. The typical lead is the
+              median time between that signal's first crossing and the loss explosion, across the
+              cluster's runs.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -147,6 +148,9 @@ export default function Runs() {
                   <div className="flex items-center gap-2">
                     <Badge variant="accent">{cluster.label}</Badge>
                     <span className="text-xs text-muted">{cluster.n_runs} runs</span>
+                    {cluster.typical_lead_steps != null && (
+                      <Badge variant="warning">~{cluster.typical_lead_steps}-step lead</Badge>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {cluster.fired_signals.map((signal) => (

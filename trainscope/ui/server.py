@@ -637,10 +637,32 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
 
         # Chronological order: earliest crossing step first.
         fired_names = sorted(fired, key=lambda name: fired[name])
+
+        # Objective explosion step (same definition as the verification
+        # experiments): first non-finite loss or a loss > 10x baseline mean.
+        explosion_step = None
+        if global_rows:
+            base_mean = sum((r.get("loss") or 0.0) for r in global_rows[:40]) / min(
+                40, len(global_rows)
+            )
+            for row in global_rows:
+                loss = row.get("loss")
+                step = row.get("step")
+                if step is None:
+                    continue
+                if (
+                    loss is None
+                    or not math.isfinite(loss)
+                    or (base_mean > 0 and loss > 10.0 * base_mean)
+                ):
+                    explosion_step = int(step)
+                    break
+
         return {
             "fired": fired_names,
             "first": fired_names[0] if fired_names else None,
             "first_steps": fired,
+            "explosion_step": explosion_step,
         }
 
     @app.get("/api/cluster")
@@ -665,9 +687,14 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 continue
             key = (tuple(sig["fired"]), sig["first"])
             group = groups.setdefault(
-                key, {"runs": [], "fired": sig["fired"], "first": sig["first"]}
+                key, {"runs": [], "fired": sig["fired"], "first": sig["first"], "leads": []}
             )
             group["runs"].append(run_dir.name)
+            # Early-warning lead = first crossing -> objective explosion.
+            if sig["explosion_step"] is not None and sig["first_steps"]:
+                first_step = sig["first_steps"][sig["first"]]
+                if first_step is not None:
+                    group["leads"].append(sig["explosion_step"] - first_step)
 
         clusters: list[dict[str, Any]] = []
         for (fired, first), group in groups.items():
@@ -678,6 +705,17 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 "loss": "loss-led",
             }
             label = labels.get(first or "", "no-signal")
+            leads = group["leads"]
+            if leads:
+                sorted_leads = sorted(leads)
+                mid = len(sorted_leads) // 2
+                median_lead = (
+                    sorted_leads[mid]
+                    if len(sorted_leads) % 2
+                    else (sorted_leads[mid - 1] + sorted_leads[mid]) / 2.0
+                )
+            else:
+                median_lead = None
             clusters.append(
                 {
                     "label": label,
@@ -685,6 +723,11 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                     "fired_signals": fired,
                     "runs": sorted(group["runs"]),
                     "n_runs": len(group["runs"]),
+                    # Median early-warning lead across the cluster's runs
+                    # (first signal crossing -> objective explosion step).
+                    "typical_lead_steps": (
+                        round(float(median_lead), 1) if median_lead is not None else None
+                    ),
                 }
             )
         clusters.sort(key=lambda c: (-int(c["n_runs"]), str(c["label"])))
