@@ -107,17 +107,19 @@ Routing & addressing view renders per-slot shares for addressor blocks
 alongside per-expert shares for routers. The detector keys on slot
 concentration, not on unused slots.
 
-**Signal ordering (v1.6.0).** The four verified signals were measured in
-the *same* organic run (a hybrid MoE+memory transformer under the LR ramp)
-via `scripts/verify_signal_ordering.py`. The order is **consistent across
-3/3 seeds**: activation kurtosis fires first (lead 29–36 steps), then
-gradient norm (22–24), then routing concentration (8–22), and loss CUSUM
-last (7–10). The earlier single-run observation that kurtosis precedes
-CUSUM was therefore not a coincidence — there is a mechanical cascade:
-activation distribution degrades first, gradients grow, routing
-concentrates, and only then does the loss CUSUM fire. Implication for the
-UI: the Spike Inspector's cascade narrative should present signals in this
-order (kurtosis as the primary alarm, the rest as confirming evidence).
+**Signal ordering (v1.6.0, corrected in v1.7.0).** The four verified signals were measured in the
+*same* organic run (a hybrid MoE+memory transformer under the LR ramp) via
+`scripts/verify_signal_ordering.py`. The original v1.6.0 run reported a consistent order
+(kurtosis → gradient norm → concentration → loss CUSUM) across 3/3 seeds, but that measurement
+used **weight** kurtosis (kurtosis of the attention projection weights) — a different physical
+quantity than the **activation** kurtosis that production records as `act_kurtosis` and that the
+original `verify_kurtosis_early_warning.py` experiment measured. Re-running with the correct
+activation metric (v1.7.0): the order is **NOT consistent** across seeds (3 distinct orders in
+3/3 seeds). The one stable finding: **loss CUSUM always fires last** (lead 7–10, 3/3 seeds). The
+relative order of kurtosis, gradient norm, and routing concentration varies by seed, so there is
+no single mechanical cascade to anchor a UI "primary alarm". Implication: do NOT promote any
+signal to primary-alarm status; the Spike Inspector should present all signals as independent
+evidence, and the earlier "kurtosis first" UI implication is withdrawn.
 
 ### Phase 3 — "Can trainscope defend itself?"
 

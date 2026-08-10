@@ -867,3 +867,92 @@ class TestCluster:
         data = client.get("/api/cluster").json()
         labels = {c["label"] for c in data["clusters"]}
         assert "activation-led" in labels
+
+
+class TestClusterChronology:
+    """Multi-signal runs: the 'first' label must reflect real crossing order."""
+
+    def test_first_signal_is_chronological_not_code_order(self, tmp_path):
+        """Kurtosis crosses at step 30, grad norm at step 50 — kurtosis must
+        be labeled first even though the code checks grad_norm before
+        kurtosis."""
+        root = tmp_path / "chrono"
+        root.mkdir()
+
+        path = root / "multi"
+        path.mkdir()
+        path.joinpath("meta.json").write_text(
+            json.dumps(
+                {
+                    "model_name": "M",
+                    "model_config": {},
+                    "trainscope_config": {
+                        "run_name": "multi",
+                        "full_resolution_window": 500,
+                        "detector": {"name": "changepoint", "threshold": 6.0},
+                    },
+                }
+            )
+        )
+        rows = []
+        for i in range(80):
+            grad = 1.0
+            if i >= 50:
+                grad = 50.0  # grad norm crosses later (step ~50)
+            rows.append(
+                {
+                    "step": i,
+                    "loss": 1.0,
+                    "grad_norm_before_clip": grad,
+                    "grad_norm_after_clip": grad,
+                    "lr": 0.001,
+                    "optimizer_v_norm": 0.0,
+                    "step_time_ms": 1.0,
+                    "batch_index": i,
+                    "is_spike": False,
+                    "cpu_memory_mb": 0.0,
+                    "cuda_memory_mb": 0.0,
+                }
+            )
+        _write_arrow(path / "global.arrow", GLOBAL_SCHEMA, rows)
+
+        # Kurtosis crosses EARLIER (step ~30).
+        layers_dir = path / "layers"
+        layers_dir.mkdir()
+        layer_rows = []
+        for i in range(80):
+            k = 3.0 if i >= 30 else 0.2
+            layer_rows.append(
+                {
+                    "step": i,
+                    "grad_l2_norm": 1.0,
+                    "weight_l2_norm": 1.0,
+                    "act_mean": 0.0,
+                    "act_std": 1.0,
+                    "act_max_abs": 1.0,
+                    "act_kurtosis": k,
+                    "grad_nan_inf_ratio": 0.0,
+                    "hist_counts": [],
+                    "hist_edges": [],
+                    "grad_max_abs": 1.0,
+                    "grad_mean": 0.0,
+                    "weight_mean": 0.0,
+                    "weight_std": 1.0,
+                    "weight_max_abs": 1.0,
+                    "weight_min": -1.0,
+                    "act_min": -1.0,
+                    "act_max": 1.0,
+                    "act_median": 0.0,
+                }
+            )
+        _write_arrow(layers_dir / "layer0.arrow", LAYER_SCHEMA, layer_rows)
+
+        client = TestClient(create_app(str(path), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+
+        assert len(data["clusters"]) == 1
+        cluster = data["clusters"][0]
+        # Both signals fired; the earlier one (kurtosis) anchors the label.
+        assert set(cluster["fired_signals"]) == {"kurtosis", "grad_norm"}
+        assert cluster["first_signal"] == "kurtosis"
+        assert cluster["label"] == "activation-led"
