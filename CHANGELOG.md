@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.5.0] - Architecture-Aware Comparison
 
 ### Added
 - **Architecture-aware comparison (Phase 1 × Phase 2).** `/api/compare` now carries each run's routing/addressing concentration series (`concentration_series`, max share per step from `moe.arrow`), and the common-cause analysis includes the *runtime signal*: if every spiked run concentrated (peak max-share above the configured detector threshold) and no stable run did, a "max routing concentration" common cause is reported — answering "which runs had expert collapse" alongside "which runs blew up". The Compare panel in the Runs view adds a concentration overlay chart (per-run lines with 0.6/0.85 threshold guides) and renders the concentration common cause with dedicated wording.
