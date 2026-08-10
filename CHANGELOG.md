@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.7.1] - Clustering Chronology & Signal-Ordering Correction
 
 ### Fixed
 - **Run clustering now orders signals chronologically, not by code order.** `/api/cluster` previously chose a run's "first" signal by the order the code checked them (grad_norm → loss → kurtosis → concentration), not by actual crossing step — so a run where kurtosis fired at step 30 and grad norm at step 50 could be mislabeled "gradient-led". `_signal_crossing` now returns the crossing step (not a bool) and the first signal is the one with the minimum crossing step, mirroring the experiment's `analyze()`. Added a regression test with two fired signals in one run where chronological order differs from code order.
