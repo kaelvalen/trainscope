@@ -42,7 +42,7 @@ const RUNS = [
 ]
 
 function mockFetch(payloads = {}) {
-  globalThis.fetch = vi.fn(async (url, options) => {
+  globalThis.fetch = vi.fn(async (url) => {
     const path = new URL(url, window.location.origin).pathname
     const payload =
       payloads[path] !== undefined
@@ -132,7 +132,7 @@ describe('Runs view', () => {
   })
 
   it('compares selected runs and shows divergence and common cause', async () => {
-    globalThis.fetch = vi.fn(async (url, options) => {
+    globalThis.fetch = vi.fn(async (url) => {
       const path = new URL(url, window.location.origin).pathname
       if (path === '/api/compare') {
         return {

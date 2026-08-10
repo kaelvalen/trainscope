@@ -11,7 +11,6 @@ import ErrorMessage from '../components/ErrorMessage.jsx'
 import Chart from '../components/Chart.jsx'
 import { FolderKanban, GitCompare, Layers, TrendingUp, Zap } from 'lucide-react'
 import { cn } from '../utils.js'
-import { CHART_COLORS } from '../theme.js'
 import { fetchCompare, fetchClusters } from '../api.js'
 
 function formatTime(iso) {
@@ -134,8 +133,8 @@ export default function Runs() {
             </CardTitle>
             <p className="chart-card__description">
               Runs grouped by which early-warning signal fired first. The typical lead is the
-              median time between that signal's first crossing and the loss explosion, across the
-              cluster's runs.
+              median time between that signal&apos;s first crossing and the loss explosion, across
+              the cluster&apos;s runs.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">

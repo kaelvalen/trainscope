@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { Network } from 'lucide-react'
 import { useRun } from '../RunContext.jsx'
 import { fetchMoe } from '../api.js'
-import { CHART_COLORS } from '../theme.js'
 import Chart from '../components/Chart.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
@@ -24,7 +23,7 @@ const EXPERT_PALETTE = [
 ]
 
 export default function ExpertUtilization() {
-  const { globalData } = useRun()
+  void useRun()
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -70,23 +69,6 @@ export default function ExpertUtilization() {
     }
     return max
   }, [rows])
-
-  const traces = useMemo(() => {
-    const perBlock = blocks.map((block) => rows.filter((r) => r.block === block))
-    return perBlock.flatMap((blockRows, blockIdx) => {
-      if (blockRows.length === 0) return []
-      const steps = blockRows.map((r) => r.step)
-      return Array.from({ length: nExperts }, (_, expert) => ({
-        x: steps,
-        y: blockRows.map((r) => r.shares[expert] ?? null),
-        type: 'scatter',
-        mode: 'lines',
-        name: `${blockIdx === 0 ? '' : `${blocks[blockIdx]} · `}expert ${expert + 1}`,
-        line: { color: EXPERT_PALETTE[expert % EXPERT_PALETTE.length], width: 1.5 },
-        connectgaps: false,
-      }))
-    })
-  }, [blocks, rows, nExperts])
 
   if (loading) {
     return (
