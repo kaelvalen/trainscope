@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.7.0] - Run Behavior Clustering
 
 ### Added
 - **Run behavior clustering (Phase 1 depth).** The Runs view now groups runs by their early-warning signal signature, using the v1.6.0 cascade ordering. `GET /api/cluster` computes, per run, which of the four signals (kurtosis, gradient norm, routing concentration, loss CUSUM/spike) fired under the same robust crossing rule used in the verification experiments, and groups runs with identical fired-signal sets and first signal. Clusters are labeled by cascade position (activation-led, gradient-led, routing-led, loss-led, no-signal); the UI renders each cluster with its runs as clickable buttons that switch the active run.
