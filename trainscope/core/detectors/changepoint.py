@@ -88,7 +88,13 @@ class ChangePointDetector(AnomalyDetector):
                 signal = history.reshape(-1, 1)
                 algo = rpt.Pelt(model="l2", min_size=max(2, self.min_observations // 5)).fit(signal)
                 change_points = algo.predict(pen=self.threshold**2)
-                if len(change_points) > 1 and change_points[-2] == len(history):
+                # ruptures' predict() always ends with the series length n
+                # (the breakpoints are segment ends); a change "right now"
+                # means the final segment holds only the current observation,
+                # i.e. the last real breakpoint is n - 1. (The previous code
+                # compared against n, which no real ruptures output ever
+                # equals, so the PELT path was dead.)
+                if len(change_points) > 1 and change_points[-2] == len(history) - 1:
                     self._history.append(loss)
                     self._trim()
                     self._positive_cusum = 0.0
