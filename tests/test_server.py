@@ -387,6 +387,48 @@ def test_diff(client):
     # layer.1 had different histograms, so KL should be > 0.
     layer_1_kl = next(item["kl_divergence"] for item in data if item["layer"] == "layer.1")
     assert layer_1_kl > 0.0
+    # layer.1 grad norms: step 0 = 1.0, step 2 = 1.2 -> change of +0.2.
+    layer_1_grad = next(item["grad_norm_change"] for item in data if item["layer"] == "layer.1")
+    assert layer_1_grad == pytest.approx(0.2)
+
+
+def test_diff_grad_norm_change_null_without_norm(tmp_path):
+    """When a layer row records no grad_l2_norm (old run), the diff reports
+    a null grad_norm_change instead of a fake zero."""
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "meta.json").write_text(json.dumps({"model_name": "M", "trainscope_config": {}}))
+    layers_dir = run / "layers"
+    layers_dir.mkdir()
+
+    def row(step, grad_norm=None):
+        return {
+            "step": step,
+            "grad_l2_norm": grad_norm,
+            "weight_l2_norm": 1.0,
+            "act_mean": 0.0,
+            "act_std": 1.0,
+            "act_max_abs": 1.0,
+            "act_kurtosis": 1.0,
+            "grad_nan_inf_ratio": 0.0,
+            "hist_counts": [1.0, 0.0, 0.0],
+            "hist_edges": [0.0, 1.0, 2.0, 3.0],
+            "grad_max_abs": 0.0,
+            "grad_mean": 0.0,
+            "weight_mean": 0.0,
+            "weight_std": 1.0,
+            "weight_max_abs": 1.0,
+            "weight_min": -1.0,
+            "act_min": -1.0,
+            "act_max": 1.0,
+            "act_median": 0.0,
+        }
+
+    _write_arrow(layers_dir / "layer0.arrow", LAYER_SCHEMA, [row(0), row(2)])
+    client = TestClient(create_app(str(run)))
+    data = client.get("/api/diff?step_a=0&step_b=2").json()
+    assert data[0]["grad_norm_change"] is None
+    assert data[0]["kl_divergence"] == 0.0
 
 
 def test_diff_invalid_step(client):
