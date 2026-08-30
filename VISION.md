@@ -1,23 +1,21 @@
 # trainscope — Where we are going
 
-This is not a task list. The roadmap has two engineering options (A/C) that
-remain open and will be revisited when needed. This document answers a
-different question: **a year from now, why would someone open trainscope, and
-what would they find?**
+This is not a task list. It answers a different question: **a year from now,
+why would someone open trainscope, and what would they find?** As of v1.8.0,
+all three phases below have shipped in some form; the sections mark what is
+done and what is still open.
 
 ## The promise today, clarified
 
 "When a loss spike hits, you know *that* it happened — trainscope tells you
-*why*." That sentence is already in the README and it is correct — but today
-trainscope keeps that promise **for a single event inside a single run**. You
-can rewind and inspect the moment the loss exploded. That is good, but a
-researcher's real day is not one spike: you try ten runs over a week, two
-blow up, eight do not, and the real question is: **"why did these two blow up
-and not the others?"**
+*why*." That sentence is in the README and it is correct. Since 1.0, that
+promise has grown from **a single event inside a single run** to the
+researcher's real day: you try ten runs over a week, two blow up, eight do
+not, and the real question is **"why did these two blow up and not the
+others?"** — answered now by the Runs view (clusters, common-fate bands,
+counterexamples) and by `trainscope report` from the shell.
 
-Trainscope cannot answer that question today. It does post-mortem for one
-event, like a single detective — but real research accumulates a case file,
-not a single case.
+Trainscope is a case file, not a single case.
 
 ## A three-phase future
 
@@ -37,6 +35,16 @@ Concretely: a researcher wakes up, looks at the 6 runs they tried overnight,
 and trainscope tells them "every run with lr=5e-4 and above has a gradient
 explosion around step 40; none at lr=1e-4" — without opening each run and
 comparing by hand.
+
+**Status (v1.8.0).** Phase 1's body has shipped. The Runs view lists runs
+side by side, compares them (divergence point, config diff, common cause),
+clusters them by signal signature, reports each cluster's discriminant
+config traits and common-fate loss band, and pairs any exploding run with
+its nearest stable run via `GET /api/counterexample`. `trainscope report
+--runs <root>` produces the same cluster analysis from the shell. What
+remains open is depth, not foundation: finer-grained attribution (which
+single hyperparameter separates a cluster from its counterexample) and
+automated sweep suggestions are natural follow-ups.
 
 ### Phase 2 — "Are you asking the right question for this architecture?"
 
@@ -121,6 +129,19 @@ no single mechanical cascade to anchor a UI "primary alarm". Implication: do NOT
 signal to primary-alarm status; the Spike Inspector should present all signals as independent
 evidence, and the earlier "kurtosis first" UI implication is withdrawn.
 
+**Attention collapse (v1.8.0, in progress).** The third candidate architecture
+class — attention concentration/uniformization (lazy-head / rank collapse) —
+has its verification script (`scripts/verify_attention_collapse_signal.py`),
+built with the same stable-control vs LR-ramp methodology. Two candidate
+statistics are measured per step (worst head across blocks): max attention
+weight and normalized attention entropy, each with a durable 3-step crossing
+rule. This script has **not yet been calibrated**: its thresholds follow the
+"control max + margin" rule, but the control's observed ceiling has not been
+measured in this repo yet, so the script prints the ceilings for calibration.
+Until it runs to a result, the attention signal is an experiment, not a claim;
+if the result is negative, it joins the rejection list below as measured-and-
+rejected.
+
 ### Phase 3 — "Can trainscope defend itself?"
 
 This is not a feature but a maturity test: is 1.0's stability promise really
@@ -134,12 +155,20 @@ release).
 This phase never ends; it runs continuously in the background — the question
 to ask on every PR.
 
+**Status (v1.8.0).** The stability promise is now pinned in code, not just
+documented: legacy-run compatibility tests (`tests/test_compat.py`), Arrow
+schema-evolution tests (`tests/test_schema_evolution.py`), a frozen plugin
+contract (`tests/test_plugin_contract.py`), and config round-trip equivalence
+tests (`tests/test_config.py`). The remaining Phase 3 work is discipline: keep
+the suites green and extend them whenever a new Arrow stream or config field
+lands.
+
 ## What we will not do, deliberately
 
 A product plan matters as much for what it rejects as for what it lists.
-Two directions were rejected early, and one more has been added since the
-first three phases shipped. All four are reviewed against the current
-state of the product (as of v1.7.x), not the original vision draft:
+Two directions were rejected early, and two more have been added since the
+first three phases shipped. All are reviewed against the current state of
+the product (as of v1.8.0), not the original vision draft:
 
 - **Becoming CV fleet monitoring ("inferencescope").** That is a shift from
   a training-time tool to an inference-time one — it breaks the identity.
@@ -172,8 +201,18 @@ state of the product (as of v1.7.x), not the original vision draft:
 
 ## What is next
 
-Phase 1 and Phase 2 do not block each other; either can start independently.
-But Phase 1 materializes faster (on top of the existing UI, like adding a new
-"runs" view), while Phase 2 is more research-heavy (first we must verify
-which MoE/routing signals truly give early warning — the same way the CUSUM
-9-11 step claim was proven, a new empirical claim must be proven).
+The three phases have all shipped in some form; what remains is their open
+edges, in priority order:
+
+1. **Finish the attention-collapse calibration (Phase 2).** Run
+   `scripts/verify_attention_collapse_signal.py` against real wikitext-2
+   data, calibrate its thresholds against the control's observed ceiling,
+   and promote the attention signal to a production detector + UI panel
+   (mirroring the MoE/addressor path) — or reject it as measured-and-not-a-
+   signal. This is the only remaining empirical gate.
+2. **Phase 1 depth: attribute clusters to a single cause.** The Runs view
+   already reports discriminant config traits and counterexamples; the
+   natural next step is making the attribution sharper — a ranked list of
+   "this field is what separates this cluster from its nearest stable run".
+3. **Phase 3 discipline.** Keep the stability suites green and extend them
+   whenever a new Arrow stream or config field lands. This never ends.
