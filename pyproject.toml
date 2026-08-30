@@ -60,6 +60,7 @@ dev = [
     "aiofiles>=23.0",
     "httpx>=0.27",
     "prometheus-client>=0.20",
+    "ruptures>=1.1",
 ]
 remote = [
     "fsspec>=2024.0",

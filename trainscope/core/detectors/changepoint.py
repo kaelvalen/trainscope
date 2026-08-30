@@ -86,15 +86,18 @@ class ChangePointDetector(AnomalyDetector):
         if rpt is not None and len(history) >= 2 * self.min_observations:
             try:
                 signal = history.reshape(-1, 1)
-                algo = rpt.Pelt(model="l2", min_size=max(2, self.min_observations // 5)).fit(signal)
+                min_size = max(2, self.min_observations // 5)
+                algo = rpt.Pelt(model="l2", min_size=min_size).fit(signal)
                 change_points = algo.predict(pen=self.threshold**2)
                 # ruptures' predict() always ends with the series length n
-                # (the breakpoints are segment ends); a change "right now"
-                # means the final segment holds only the current observation,
-                # i.e. the last real breakpoint is n - 1. (The previous code
-                # compared against n, which no real ruptures output ever
-                # equals, so the PELT path was dead.)
-                if len(change_points) > 1 and change_points[-2] == len(history) - 1:
+                # (the breakpoints are segment ends, sorted). A change "right
+                # now" means the final segment is as short as the structural
+                # minimum allows: its end is at n and its start is no earlier
+                # than n - min_size, so the last real breakpoint sits in
+                # [n - min_size, n). Comparing for equality against n - 1
+                # would be unreachable for any min_size > 1 (min_size is at
+                # least 2), silently dead like the pre-fix n comparison.
+                if len(change_points) > 1 and change_points[-2] >= len(history) - min_size:
                     self._history.append(loss)
                     self._trim()
                     self._positive_cusum = 0.0
