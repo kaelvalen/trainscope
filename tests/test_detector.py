@@ -1,3 +1,5 @@
+import pytest
+
 from trainscope.core.detector import SpikeDetector
 
 
@@ -350,8 +352,6 @@ class TestChangePointDetector:
         a value clamped to the threshold: subtle change points (|dev| below
         threshold) must carry their true (small) magnitude instead of a flat
         |score| == threshold that makes every PELT spike look identical."""
-        import pytest
-
         from trainscope.core.detectors import changepoint as cp_mod
         from trainscope.core.detectors.changepoint import ChangePointDetector
 
@@ -390,8 +390,6 @@ class TestChangePointDetector:
         assert abs(res) < 6.0, "PELT score must not be clamped up to the threshold"
 
     def test_pelt_path_preserves_sign_and_magnitude(self, monkeypatch):
-        import pytest
-
         from trainscope.core.detectors import changepoint as cp_mod
         from trainscope.core.detectors.changepoint import ChangePointDetector
 
@@ -461,10 +459,11 @@ class TestChangePointDetector:
         # whose z = 2.02 < threshold=6.0, so nothing is returned either).
         assert det.update(1.2) is None
 
-    def test_pelt_ignores_impossible_predict_output(self, monkeypatch):
-        """The old dead-code check compared against n, which no real ruptures
-        output equals ([..., n, n] never happens). That exact impossible
-        output must no longer trigger the PELT path."""
+    def test_pelt_ignores_change_older_than_min_size(self, monkeypatch):
+        """The PELT path must only fire when the final segment is at the
+        structural minimum (min_size) or shorter: a breakpoint that leaves a
+        final segment longer than min_size is not a change "right now" and
+        must not fire, so the CUSUM baseline is not corrupted."""
         from trainscope.core.detectors import changepoint as cp_mod
         from trainscope.core.detectors.changepoint import ChangePointDetector
 
@@ -477,8 +476,11 @@ class TestChangePointDetector:
                 return self
 
             def predict(self, pen):
+                # min_observations=10 -> min_size = max(2, 10//5) = 2.
+                # A breakpoint at n-3 leaves a final segment of 3 > min_size,
+                # so the change is NOT "now".
                 n = len(self._signal)
-                return [n, n]
+                return [n - 3, n]
 
         class _FakeRpt:
             Pelt = _FakePelt
@@ -491,6 +493,84 @@ class TestChangePointDetector:
             det.update(1.1)
 
         assert det.update(1.2) is None
+
+    def test_pelt_fires_when_final_segment_at_min_size(self, monkeypatch):
+        """A breakpoint leaving a final segment exactly min_size long is the
+        latest structurally possible change; it must fire."""
+        from trainscope.core.detectors import changepoint as cp_mod
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        class _FakePelt:
+            def __init__(self, *args, **kwargs):
+                self._signal: list = []
+
+            def fit(self, signal):
+                self._signal = signal
+                return self
+
+            def predict(self, pen):
+                # min_size = 2: breakpoint at n-2 -> final segment length 2.
+                n = len(self._signal)
+                return [n - 2, n]
+
+        class _FakeRpt:
+            Pelt = _FakePelt
+
+        monkeypatch.setattr(cp_mod, "rpt", _FakeRpt)
+
+        det = ChangePointDetector(threshold=6.0, min_observations=10)
+        for _ in range(20):
+            det.update(1.0)
+            det.update(1.1)
+
+        res = det.update(1.2)
+        assert res is not None
+        assert res == pytest.approx((1.2 - 1.05) / (1.4826 * 0.05))
+
+
+class TestChangePointDetectorPeltIntegration:
+    """Tests against the real ruptures library (installed via the dev extra),
+    not a stub. These guard the PELT branch against the min_size/breakpoint
+    arithmetic that the unit tests above can only approximate."""
+
+    def test_real_pelt_fires_on_recent_change(self):
+        rpt = pytest.importorskip("ruptures")
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        # Guard: the import must actually see the real library (a stub injected
+        # by an earlier monkeypatch in the same process would be a false pass).
+        assert rpt.Pelt.__name__ == "Pelt"
+
+        det = ChangePointDetector(threshold=6.0, min_observations=10)
+        # Stable baseline, then a recent jump that PELT should flag.
+        for _ in range(20):
+            det.update(1.0)
+            det.update(1.1)
+        res = det.update(1.2)
+        # With min_observations=10 -> min_size=2, the final segment after a
+        # jump is short enough that the real PELT reports a change "now"; the
+        # detector fires and returns the raw deviation, not a clamped value.
+        assert res is not None
+        assert abs(res) < 6.0
+
+    def test_real_pelt_does_not_fire_on_old_change(self):
+        rpt = pytest.importorskip("ruptures")
+
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        assert rpt.Pelt.__name__ == "Pelt"
+
+        det = ChangePointDetector(threshold=6.0, min_observations=10)
+        # Two regimes: 20 stable values then a sustained shift for 20 more.
+        # The change is in the middle of the window, not at the tail, so the
+        # final segment is long and PELT should NOT report "now".
+        for _ in range(20):
+            det.update(1.0)
+        for _ in range(20):
+            det.update(1.4)
+        # No new change at the current observation.
+        assert det.update(1.4) is None
 
 
 class TestExpertUtilizationDriftDetector:
