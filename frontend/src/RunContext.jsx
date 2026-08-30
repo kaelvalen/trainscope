@@ -4,6 +4,7 @@ import {
   fetchGlobal,
   fetchLayers,
   fetchSpikes,
+  fetchMoe,
   abortAllRequests,
   fetchRuns,
   selectRun,
@@ -25,6 +26,18 @@ function sameRows(previous, next) {
       row.loss === other?.loss &&
       row.grad_norm_before_clip === other?.grad_norm_before_clip &&
       row.is_spike === other?.is_spike
+    )
+  })
+}
+
+function sameMoeRows(previous, next) {
+  if (previous.length !== next.length) return false
+  return previous.every((row, index) => {
+    const other = next[index]
+    return (
+      row.step === other?.step &&
+      row.block === other?.block &&
+      JSON.stringify(row.shares ?? null) === JSON.stringify(other?.shares ?? null)
     )
   })
 }
@@ -61,6 +74,7 @@ export function RunProvider({ children }) {
   const [globalData, setGlobalData] = useState([])
   const [layerNames, setLayerNames] = useState([])
   const [spikes, setSpikes] = useState([])
+  const [moeData, setMoeData] = useState([])
   const [runs, setRuns] = useState([])
   const [activeRunName, setActiveRunName] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -78,18 +92,20 @@ export function RunProvider({ children }) {
     setError(null)
 
     try {
-      const [metaData, gData, names, spikeList, runList] = await Promise.all([
+      const [metaData, gData, names, spikeList, runList, moeList] = await Promise.all([
         silent ? Promise.resolve(null) : fetchMeta(),
         fetchGlobal(),
         fetchLayers(),
         fetchSpikes(),
         fetchRuns(),
+        fetchMoe(),
       ])
       if (!silent) setMeta(metaData)
       const nextGlobalData = Array.isArray(gData) ? gData : []
       const nextLayerNames = Array.isArray(names) ? names : []
       const nextSpikes = Array.isArray(spikeList) ? spikeList : []
       const nextRuns = Array.isArray(runList) ? runList : []
+      const nextMoeData = Array.isArray(moeList) ? moeList : []
 
       // An Arrow file can be momentarily unavailable while it is being
       // replaced. Keep the last good snapshot instead of turning the live
@@ -116,6 +132,10 @@ export function RunProvider({ children }) {
       setSpikes((previous) => {
         if (previous.length > 0 && nextSpikes.length === 0) return previous
         return sameSpikes(previous, nextSpikes) ? previous : nextSpikes
+      })
+      setMoeData((previous) => {
+        if (previous.length > 0 && nextMoeData.length === 0) return previous
+        return sameMoeRows(previous, nextMoeData) ? previous : nextMoeData
       })
       setRuns((previous) =>
         sameValues(
@@ -176,6 +196,25 @@ export function RunProvider({ children }) {
           setLayerNames((previous) => {
             const nextLayers = Array.isArray(message.payload) ? message.payload : []
             return sameValues(previous, nextLayers) ? previous : nextLayers
+          })
+          break
+        case 'moe':
+          setLastUpdatedAt(Date.now())
+          setMoeData((previous) => {
+            const nextRows = Array.isArray(message.payload) ? message.payload : []
+            if (previous.length > 0 && nextRows.length === 0) return previous
+            return sameMoeRows(previous, nextRows) ? previous : nextRows
+          })
+          break
+        case 'moe_delta':
+          setLastUpdatedAt(Date.now())
+          setMoeData((previous) => {
+            const newRows = Array.isArray(message.payload) ? message.payload : []
+            if (newRows.length === 0) return previous
+            return sameMoeRows(previous, [...previous, ...newRows]) ? previous : [
+              ...previous,
+              ...newRows,
+            ]
           })
           break
         case 'spike': {
@@ -263,6 +302,7 @@ export function RunProvider({ children }) {
       layerNames,
       spikes,
       spikeEvents,
+      moeData,
       runs,
       activeRunName,
       switchRun,
@@ -279,6 +319,7 @@ export function RunProvider({ children }) {
       layerNames,
       spikes,
       spikeEvents,
+      moeData,
       runs,
       activeRunName,
       switchRun,

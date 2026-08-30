@@ -52,6 +52,7 @@ function mockFetch(payloads = {}) {
             '/api/global': [],
             '/api/layers': [],
             '/api/spikes': [],
+            '/api/moe': [],
             '/api/runs': RUNS,
             '/api/cluster': { clusters: [], unclustered: [] },
           }[path]
@@ -111,6 +112,7 @@ describe('Runs view', () => {
         '/api/global': [],
         '/api/layers': [],
         '/api/spikes': [],
+        '/api/moe': [],
         '/api/runs': RUNS,
         '/api/cluster': { clusters: [], unclustered: [] },
       }[path]
@@ -180,6 +182,7 @@ describe('Runs view', () => {
         '/api/global': [],
         '/api/layers': [],
         '/api/spikes': [],
+        '/api/moe': [],
         '/api/runs': RUNS,
         '/api/cluster': { clusters: [], unclustered: [] },
       }[path]
@@ -226,6 +229,7 @@ describe('Runs view clusters', () => {
         '/api/global': [],
         '/api/layers': [],
         '/api/spikes': [],
+        '/api/moe': [],
         '/api/runs': RUNS,
         '/api/cluster': {
           clusters: [
