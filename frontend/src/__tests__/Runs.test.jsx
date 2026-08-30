@@ -247,6 +247,26 @@ describe('Runs view clusters', () => {
           ],
           unclustered: [],
         },
+        '/api/counterexample': {
+          query_run: 'run_a',
+          counterexample_run: 'run_c',
+          config_distance: 0.05,
+          first_signal: 'grad_norm',
+          crossing_step: 40,
+          loss_series: {
+            run_a: [
+              { step: 0, loss: 1.0 },
+              { step: 40, loss: 2.0 },
+              { step: 41, loss: 8.0 },
+            ],
+            run_c: [
+              { step: 0, loss: 1.0 },
+              { step: 40, loss: 1.1 },
+              { step: 41, loss: 1.1 },
+            ],
+          },
+          config_diff: [{ field: 'model.lr', query_value: 0.0005, stable_value: 0.0001 }],
+        },
       }
       return { ok: true, json: async () => payload[path] }
     })
@@ -272,5 +292,23 @@ describe('Runs view clusters', () => {
     expect(screen.getByText('2 runs')).toBeInTheDocument()
     expect(screen.getByText('~23.5-step lead')).toBeInTheDocument()
     expect(screen.getByText('distinct: model.lr=0.0005')).toBeInTheDocument()
+  })
+
+  it('shows the nearest stable counterexample on demand', async () => {
+    render(
+      <ToastProvider>
+        <RunProvider>
+          <Runs />
+        </RunProvider>
+      </ToastProvider>
+    )
+    await waitFor(() => expect(screen.getByText('gradient-led')).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: /Why this.*vs\. stable/i }))
+    await waitFor(() =>
+      expect(screen.getByText(/Why run_a vs\. run_c/i)).toBeInTheDocument()
+    )
+    expect(screen.getByText(/First signal: grad_norm at step 40/i)).toBeInTheDocument()
+    expect(screen.getByText('model.lr')).toBeInTheDocument()
+    expect(screen.getByText('0.0005')).toBeInTheDocument()
   })
 })

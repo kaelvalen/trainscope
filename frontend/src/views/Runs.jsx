@@ -11,7 +11,7 @@ import ErrorMessage from '../components/ErrorMessage.jsx'
 import Chart from '../components/Chart.jsx'
 import { FolderKanban, GitCompare, Layers, TrendingUp, Zap } from 'lucide-react'
 import { cn } from '../utils.js'
-import { fetchCompare, fetchClusters } from '../api.js'
+import { fetchCompare, fetchClusters, fetchCounterexample } from '../api.js'
 
 function formatTime(iso) {
   if (!iso) return '—'
@@ -38,6 +38,9 @@ export default function Runs() {
   const [compareError, setCompareError] = useState(null)
   const [clusters, setClusters] = useState(null)
   const [clusterError, setClusterError] = useState(null)
+  const [counterexample, setCounterexample] = useState(null)
+  const [counterexampleLoading, setCounterexampleLoading] = useState(false)
+  const [counterexampleError, setCounterexampleError] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -79,6 +82,19 @@ export default function Runs() {
       setCompareError(err?.message || 'Failed to compare runs.')
     } finally {
       setComparing(false)
+    }
+  }
+
+  async function handleCounterexample(runName) {
+    setCounterexampleLoading(true)
+    setCounterexampleError(null)
+    try {
+      const data = await fetchCounterexample(runName)
+      setCounterexample(data)
+    } catch (err) {
+      setCounterexampleError(err?.message || 'Failed to find a counterexample run.')
+    } finally {
+      setCounterexampleLoading(false)
     }
   }
 
@@ -179,6 +195,15 @@ export default function Runs() {
                       {name}
                     </Button>
                   ))}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={counterexampleLoading}
+                    onClick={() => handleCounterexample(cluster.runs[0])}
+                    className="ml-auto text-xs"
+                  >
+                    {counterexampleLoading ? 'Finding…' : 'Why this & vs. stable'}
+                  </Button>
                 </div>
                 {cluster.loss_band?.steps?.length > 0 && (
                   <div className="mt-3">
@@ -230,6 +255,80 @@ export default function Runs() {
                 {clusters.unclustered.length} run(s) without signal data:
                 {clusters.unclustered.join(', ')}
               </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {counterexampleError && <ErrorMessage message={counterexampleError} />}
+
+      {counterexample && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <span className="metric-card__icon" aria-hidden="true">
+                <GitCompare className="h-3.5 w-3.5" />
+              </span>
+              Why {counterexample.query_run} vs. {counterexample.counterexample_run}
+            </CardTitle>
+            <p className="chart-card__description">
+              The nearest stable run by config distance (
+              {counterexample.config_distance}).{' '}
+              {counterexample.first_signal
+                ? `First signal: ${counterexample.first_signal} at step ${counterexample.crossing_step}.`
+                : 'No early-warning signal fired in the query run.'}
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <Chart
+              data={[
+                {
+                  x: (counterexample.loss_series?.[counterexample.query_run] ?? []).map(
+                    (p) => p.step
+                  ),
+                  y: (counterexample.loss_series?.[counterexample.query_run] ?? []).map(
+                    (p) => p.loss
+                  ),
+                  name: counterexample.query_run,
+                  line: { color: '#f87171', width: 2 },
+                  mode: 'lines',
+                },
+                {
+                  x: (counterexample.loss_series?.[counterexample.counterexample_run] ?? []).map(
+                    (p) => p.step
+                  ),
+                  y: (
+                    counterexample.loss_series?.[counterexample.counterexample_run] ?? []
+                  ).map((p) => p.loss),
+                  name: counterexample.counterexample_run,
+                  line: { color: '#4ade80', width: 2 },
+                  mode: 'lines',
+                },
+              ]}
+              layout={{
+                height: 260,
+                margin: { l: 52, r: 12, t: 8, b: 36 },
+                yaxis: { title: { text: 'loss' } },
+                xaxis: { title: { text: 'step' } },
+              }}
+            />
+            {counterexample.config_diff?.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-xs font-medium text-muted">
+                  Config fields that differ between the pair:
+                </p>
+                {counterexample.config_diff.map((entry) => (
+                  <div
+                    key={entry.field}
+                    className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
+                  >
+                    <span className="text-muted">{entry.field}</span>
+                    <span className="text-danger">{String(entry.query_value)}</span>
+                    <span className="text-muted">vs.</span>
+                    <span className="text-success">{String(entry.stable_value)}</span>
+                  </div>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>

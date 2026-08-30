@@ -181,6 +181,10 @@ class CompareParams(BaseModel):
     runs: str = Field(..., description="Comma-separated run directory names to compare")
 
 
+class CounterexampleParams(BaseModel):
+    run: str = Field(..., min_length=1, description="Run directory name to analyze")
+
+
 def _discover_run_dirs(root: Path) -> list[Path]:
     """Return run directories under ``root`` (sorted, deterministic)."""
     if not root.exists() or not root.is_dir():
@@ -822,6 +826,115 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
             )
         clusters.sort(key=lambda c: (-int(c["n_runs"]), str(c["label"])))
         return {"clusters": clusters, "unclustered": sorted(unclustered)}
+
+    @app.get("/api/counterexample")
+    async def get_counterexample(
+        params: Annotated[CounterexampleParams, Depends()],
+    ) -> dict[str, Any]:
+        """Find the most instructive comparison for an exploding run.
+
+        For a run with a fired signal, locate the *nearest stable* run — the
+        run with no fired signals whose flattened config is closest to the
+        query run's. The pair answers "what variable made this run blow up
+        when an otherwise identical run did not": the config diff is small
+        (the runs are near-identical) but every differing field is a
+        candidate cause.
+
+        Config distance is computed over the shared flattened scalar fields
+        (numeric fields compared on a normalized scale, booleans on
+        equality). Returns both loss series, the query run's first fired
+        signal and its crossing step, and the differing config fields.
+        """
+        if not multi_run:
+            raise HTTPException(
+                status_code=404,
+                detail="Counterexample requires multi-run mode (--runs)",
+            )
+        assert rr is not None
+        by_name = {d.name: d for d in _discover_run_dirs(rr)}
+        if params.run not in by_name:
+            raise HTTPException(status_code=404, detail=f"Run '{params.run}' not found")
+
+        query_dir = by_name[params.run]
+        query_meta = await _read_json_optional(query_dir / "meta.json") or {}
+        query_flat = _flatten_config(query_meta)
+
+        query_sig = await _run_signal_signature(query_dir)
+        if not query_sig["fired"]:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Run '{params.run}' has no fired signal to explain",
+            )
+
+        # Identify stable runs: no fired signals, no spikes.
+        stable: list[tuple[str, dict[str, Any]]] = []
+        for name, run_dir in by_name.items():
+            if name == params.run:
+                continue
+            meta = await _read_json_optional(run_dir / "meta.json") or {}
+            flat = _flatten_config(meta)
+            sig = await _run_signal_signature(run_dir)
+            if sig["fired"]:
+                continue
+            spike_steps = await _get_spike_steps(run_dir)
+            if spike_steps:
+                continue
+            stable.append((name, flat))
+        if not stable:
+            raise HTTPException(status_code=404, detail="No stable run to compare against")
+
+        # Distance over shared scalar fields.
+        def _config_distance(a: dict[str, Any], b: dict[str, Any]) -> float:
+            shared = set(a) & set(b)
+            if not shared:
+                return float("inf")
+            total = 0.0
+            for k in shared:
+                va, vb = a[k], b[k]
+                if isinstance(va, bool) and isinstance(vb, bool):
+                    total += 0.0 if va == vb else 1.0
+                elif isinstance(va, (int, float)) and isinstance(vb, (int, float)):
+                    if va == vb:
+                        continue
+                    total += abs(float(va) - float(vb)) / max(abs(float(va)), abs(float(vb)), 1e-9)
+                # Non-numeric shared fields contribute nothing (names, paths).
+            return total
+
+        closest = min(stable, key=lambda pair: _config_distance(query_flat, pair[1]))
+        stable_name, stable_flat = closest
+        stable_dir = by_name[stable_name]
+
+        first_signal = query_sig.get("first")
+        first_steps = query_sig.get("first_steps") or {}
+        crossing_step = first_steps.get(first_signal) if first_signal else None
+
+        def _loss_series(run_dir: Path) -> list[dict[str, Any]]:
+            rows = _read_arrow_sync(run_dir / "global.arrow")
+            return [
+                {"step": r.get("step"), "loss": r.get("loss")}
+                for r in rows
+                if r.get("step") is not None
+            ]
+
+        # Config fields that differ between the pair (sorted by impact).
+        differing: list[dict[str, Any]] = []
+        for k in sorted(set(query_flat) | set(stable_flat)):
+            if query_flat.get(k) == stable_flat.get(k):
+                continue
+            differing.append({"field": k, "query_value": query_flat.get(k), "stable_value": stable_flat.get(k)})
+
+        return {
+            "query_run": params.run,
+            "counterexample_run": stable_name,
+            "config_distance": round(_config_distance(query_flat, stable_flat), 4),
+            "first_signal": first_signal,
+            "crossing_step": crossing_step,
+            "loss_series": {
+                params.run: _loss_series(query_dir),
+                stable_name: _loss_series(stable_dir),
+            },
+            "config_diff": differing,
+        }
 
     @app.get("/api/manifest")
     async def manifest() -> Any:
