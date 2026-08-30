@@ -218,6 +218,11 @@ export async function fetchClusters() {
   return request('/cluster')
 }
 
+export async function fetchCounterexample(runName) {
+  if (!runName) throw new ApiError('Run name is required')
+  return request(`/counterexample?run=${encodeURIComponent(runName)}`)
+}
+
 export async function selectRun(name) {
   if (!name) throw new ApiError('Run name is required')
   return request('/runs/select', {

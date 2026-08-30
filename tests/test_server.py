@@ -909,6 +909,62 @@ class TestCluster:
         assert clusters["loss-led"]["runs"] == ["loss_c"]
         assert "no-signal" in clusters or "calm_d" in data["unclustered"]
 
+    def test_counterexample_finds_nearest_stable_run(self, tmp_path):
+        """An exploding run gets its nearest stable run (by config distance):
+        the loss series of both, the first fired signal's crossing step, and
+        the config fields that differ between the pair."""
+        root = tmp_path / "ce"
+        root.mkdir()
+        # grad_a is gradient-led at lr=5e-4. Two stable runs exist: one at
+        # lr=5e-4 (identical config, closest) and one at lr=1e-4 (farther).
+        self._write_run(root, "grad_a", grad_spike=True, lr=5e-4)
+        self._write_run(root, "stable_same", lr=5e-4)
+        self._write_run(root, "stable_far", lr=1e-4)
+
+        client = TestClient(create_app(str(root / "grad_a"), runs_root=str(root)))
+        data = client.get("/api/counterexample?run=grad_a").json()
+
+        assert data["counterexample_run"] == "stable_same"
+        assert data["config_distance"] == 0.0
+        assert data["first_signal"] == "grad_norm"
+        assert data["crossing_step"] == 40
+        assert set(data["loss_series"]) == {"grad_a", "stable_same"}
+        assert len(data["loss_series"]["grad_a"]) == 80
+        # Identical configs -> no differing fields.
+        assert data["config_diff"] == []
+
+    def test_counterexample_reports_differing_config(self, tmp_path):
+        """When the nearest stable run differs in a scalar field, that field
+        is the candidate cause and is reported."""
+        root = tmp_path / "ce2"
+        root.mkdir()
+        self._write_run(root, "grad_a", grad_spike=True, lr=5e-4)
+        self._write_run(root, "stable_low", lr=1e-4)
+
+        client = TestClient(create_app(str(root / "grad_a"), runs_root=str(root)))
+        data = client.get("/api/counterexample?run=grad_a").json()
+
+        assert data["counterexample_run"] == "stable_low"
+        diff = {d["field"]: d for d in data["config_diff"]}
+        assert "model.lr" in diff
+        assert diff["model.lr"]["query_value"] == 5e-4
+        assert diff["model.lr"]["stable_value"] == 1e-4
+        # The two runs differ in lr, so config distance is non-zero.
+        assert data["config_distance"] > 0.0
+
+    def test_counterexample_requires_spiking_run(self, tmp_path):
+        """A run with no fired signal and no spikes has no counterexample."""
+        root = tmp_path / "ce3"
+        root.mkdir()
+        self._write_run(root, "calm_a")
+        self._write_run(root, "calm_b")
+
+        client = TestClient(create_app(str(root / "calm_a"), runs_root=str(root)))
+        assert client.get("/api/counterexample?run=calm_a").status_code == 404
+
+    def test_counterexample_requires_multi_run_mode(self, client):
+        assert client.get("/api/counterexample?run=run").status_code == 404
+
     def test_cluster_loss_band(self, tmp_path):
         """The cluster's loss band is a per-step median + IQR of each member's
         loss normalized by its own first-40 baseline mean. Two runs on very
