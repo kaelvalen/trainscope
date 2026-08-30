@@ -122,6 +122,7 @@ Four views, one command:
 | **Layer Drill-down** | Kurtosis / grad norm / weight norm per layer with histogram scrubber |
 | **Diff View** | KL divergence of weight distributions between any two steps |
 | **Spike Inspector** | **Spike Story Flow**: Chronological root cause cascade diagnosis & layer breakdown |
+| **Replay** | The run's generated `replay_config.json` with the training steps its skip list maps to |
 
 The React UI is served by default after `pip install trainscope` (pre-compiled assets included). If developing from source:
 

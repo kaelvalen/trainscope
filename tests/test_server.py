@@ -167,6 +167,52 @@ def test_global(client):
     assert r.json()[3]["is_spike"] is True
 
 
+def test_replay_no_config(client):
+    """Without a replay_config.json the endpoint reports an empty plan."""
+    r = client.get("/api/replay")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["config"] is None
+    assert data["skipped_batches"] == []
+    assert data["skipped_steps"] == []
+    assert data["n_global_steps"] == 5
+
+
+def test_replay_maps_skipped_batches_to_steps(run_dir):
+    """A replay config's skipped batch indices are mapped onto the training
+    steps that consumed those batches via global.arrow's batch_index."""
+    (run_dir / "replay_config.json").write_text(
+        json.dumps(
+            {
+                "checkpoint": str(run_dir / "checkpoints" / "4.pt"),
+                "skip_batches": [2, 3],
+                "total_skipped": 2,
+            }
+        )
+    )
+    client = TestClient(create_app(str(run_dir)))
+    r = client.get("/api/replay")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["config"]["checkpoint"].endswith("checkpoints/4.pt")
+    assert data["skipped_batches"] == [2, 3]
+    # batch_index == step in this fixture, so the skipped steps are 2 and 3.
+    assert data["skipped_steps"] == [2, 3]
+    assert data["n_global_steps"] == 5
+
+
+def test_replay_skips_unrecorded_batch_indices(run_dir):
+    """Batch indices that no global row consumed (e.g. out of range) must not
+    produce phantom skipped steps."""
+    (run_dir / "replay_config.json").write_text(
+        json.dumps({"skip_batches": [99, 100], "total_skipped": 2})
+    )
+    client = TestClient(create_app(str(run_dir)))
+    data = client.get("/api/replay").json()
+    assert data["skipped_batches"] == [99, 100]
+    assert data["skipped_steps"] == []
+
+
 def test_websocket_streams_global_rows_after_empty_start(tmp_path):
     run = tmp_path / "live"
     run.mkdir()
