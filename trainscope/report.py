@@ -37,7 +37,11 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 
 def _loss_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    losses = [r.get("loss") for r in rows if isinstance(r.get("loss"), (int, float))]
+    losses: list[float] = []
+    for row in rows:
+        value = row.get("loss")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            losses.append(float(value))
     if not losses:
         return {"n": 0}
     finite = [value for value in losses if math.isfinite(value)]

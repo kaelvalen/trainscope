@@ -856,11 +856,12 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
 
         # Steps whose batch_index is in the skip set. batch_index may be -1
         # (not recorded) or absent in old runs; those steps are never matched.
-        skipped_steps = sorted(
-            row.get("step")
-            for row in global_rows
-            if row.get("batch_index") in skipped_batches and row.get("step") is not None
-        )
+        skipped_steps: list[int] = []
+        for row in global_rows:
+            step = row.get("step")
+            if isinstance(step, int) and row.get("batch_index") in skipped_batches:
+                skipped_steps.append(step)
+        skipped_steps.sort()
 
         return {
             "config": config,

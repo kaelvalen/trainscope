@@ -23,7 +23,7 @@ const EXPERT_PALETTE = [
 
 export default function ExpertUtilization() {
   const { moeData, loading, error } = useRun()
-  const rows = moeData ?? []
+  const rows = useMemo(() => moeData ?? [], [moeData])
 
   const blocks = useMemo(() => {
     const names = []
