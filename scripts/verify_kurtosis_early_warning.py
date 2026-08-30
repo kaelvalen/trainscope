@@ -10,7 +10,7 @@ computed every step (same formula as ``compute_activation_metrics``).
 
 Measures, per seed:
   - first step where any block's kurtosis exceeds its warmup baseline by a
-    robust margin (median + k * MAD)
+    robust margin (median + k·σ, σ = 1.4826·MAD)
   - explosion step (loss > 10x baseline mean, or non-finite) — same objective
     definition as the CUSUM experiment, independent of any detector
   - early-warning lead (explosion - first kurtosis rise)
@@ -27,6 +27,7 @@ import pyarrow.ipc as ipc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from _wikitext import find_wikitext_arrow
 
 SEQ_LEN = 64
 BATCH = 12
@@ -39,16 +40,12 @@ RAMP_FACTOR = 1.2
 N_STEPS = 260
 BASE_LR = 1e-3
 
-# Kurtosis must exceed baseline_median + K * baseline_MAD to count as "risen".
+# Kurtosis must exceed baseline_median + K * baseline_sigma to count as
+# "risen", where sigma = 1.4826 * MAD (the robust sigma estimate the CUSUM
+# detector and trainscope.analysis.first_crossing_step use).
 KURTOSIS_MARGIN_K = 3.0
 # A rise must occur after warmup; baseline is the last 40 warmup steps.
 BASELINE_STEPS = 40
-
-DEFAULT_DATA = (
-    "/home/kael/.cache/huggingface/datasets/Salesforce___wikitext/"
-    "wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3/"
-    "wikitext-train.arrow"
-)
 
 
 class CausalSelfAttention(nn.Module):
@@ -206,7 +203,7 @@ def analyze(seed, losses, block_kurtosis):
     first_rise = None
     for step in range(WARMUP, explosion):
         for b in range(per_block.shape[0]):
-            threshold = baseline_med[b] + KURTOSIS_MARGIN_K * baseline_mad[b]
+            threshold = baseline_med[b] + KURTOSIS_MARGIN_K * baseline_mad[b] * 1.4826
             if np.isfinite(per_block[b, step]) and per_block[b, step] > threshold:
                 first_rise = step
                 break
@@ -228,11 +225,16 @@ def analyze(seed, losses, block_kurtosis):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=str, default="1,7,42")
-    parser.add_argument("--data", type=str, default=DEFAULT_DATA)
+    parser.add_argument(
+        "--data",
+        type=str,
+        default=None,
+        help="Path to wikitext-train.arrow (default: resolve from the HF cache)",
+    )
     parser.add_argument("--k", type=float, default=KURTOSIS_MARGIN_K)
     args = parser.parse_args()
 
-    tokens, vocab = load_wikitext_chars(args.data)
+    tokens, vocab = load_wikitext_chars(args.data or find_wikitext_arrow())
     print(f"wikitext-2: {len(tokens)} chars, vocab={vocab}, margin k={args.k}", flush=True)
 
     results = []

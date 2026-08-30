@@ -19,12 +19,12 @@ per seed:
 Signals measured per step:
   - loss CUSUM: the real ChangePointDetector (threshold 6.0, slack 1.0)
   - activation kurtosis: excess kurtosis of block *outputs* (baseline
-    median + 3*MAD, same metric as production's act_kurtosis) — NOT a
-    weight kurtosis. An earlier version measured kurtosis of the attention
-    projection *weights*, which is a different physical quantity; with the
-    correct activation metric the ordering claim does not reproduce (see
-    below).
-  - gradient norm: L2 norm of all grads (baseline median + 3*MAD)
+    median + 3σ, σ = 1.4826·MAD, same metric as production's act_kurtosis)
+    — NOT a weight kurtosis. An earlier version measured kurtosis of the
+    attention projection *weights*, which is a different physical quantity;
+    with the correct activation metric the ordering claim does not
+    reproduce (see below).
+  - gradient norm: L2 norm of all grads (baseline median + 3σ)
   - routing concentration: max expert share (threshold 0.85, same as the
     MoE experiment)
 
@@ -53,6 +53,7 @@ import pyarrow.ipc as ipc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from _wikitext import find_wikitext_arrow
 
 SEQ_LEN = 64
 BATCH = 12
@@ -70,15 +71,10 @@ N_STEPS = 260
 BASE_LR = 1e-3
 
 # Robust "crossing" rule shared by all four signals: the signal must exceed
-# baseline_median + MARGIN_K * baseline_MAD for MIN_RUN consecutive steps.
+# baseline_median + MARGIN_K * baseline_sigma (sigma = 1.4826 * MAD) for
+# MIN_RUN consecutive steps.
 MARGIN_K = 3.0
 MIN_RUN = 3
-
-DEFAULT_DATA = (
-    "/home/kael/.cache/huggingface/datasets/Salesforce___wikitext/"
-    "wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3/"
-    "wikitext-train.arrow"
-)
 
 
 class ExpertFFN(nn.Module):
@@ -284,12 +280,16 @@ def train(seed, vocab, tokens, scenario, n_steps=N_STEPS):
 def _first_durable_crossing(
     signal: list[float], baseline: list[float], k: float, run: int, start: int = 0
 ) -> int | None:
-    """First step >= start where signal exceeds baseline median + k*MAD for `run` steps."""
+    """First step >= start where signal exceeds baseline median + kσ for `run` steps.
+
+    σ is the robust sigma estimate ``1.4826 * MAD`` — the same calibration
+    the CUSUM detector and ``trainscope.analysis.first_crossing_step`` use.
+    """
     arr = np.array(signal, dtype=float)
     base = np.array(baseline, dtype=float)
     med = np.median(base)
     mad = np.median(np.abs(base - med))
-    threshold = med + k * mad
+    threshold = med + k * mad * 1.4826
     run_count = 0
     for i in range(start, len(arr)):
         if np.isfinite(arr[i]) and arr[i] > threshold:
@@ -365,10 +365,15 @@ def analyze(seed, scenario, signals):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=str, default="1,7,42")
-    parser.add_argument("--data", type=str, default=DEFAULT_DATA)
+    parser.add_argument(
+        "--data",
+        type=str,
+        default=None,
+        help="Path to wikitext-train.arrow (default: resolve from the HF cache)",
+    )
     args = parser.parse_args()
 
-    tokens, vocab = load_wikitext_chars(args.data)
+    tokens, vocab = load_wikitext_chars(args.data or find_wikitext_arrow())
     print(
         f"wikitext-2: {len(tokens)} chars, vocab={vocab}, experts={N_EXPERTS} slots={N_SLOTS}",
         flush=True,
