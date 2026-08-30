@@ -59,21 +59,23 @@ async def get_spike_steps(run_path: Path) -> set[int]:
 
 
 def first_crossing_step(values: list[float]) -> int | None:
-    """Step index where ``values`` durably crosses baseline median + 3*MAD.
+    """Step index where ``values`` durably crosses baseline median + 3σ.
 
     Baseline is the first 40 samples (warmup), the crossing must hold for
-    3 consecutive steps — the same robust rule used across all four
-    verification experiments. Returns the step index of the first crossing
-    (i.e. the step where the 3-step run began), or None when the signal never
-    crosses. The step index — not a boolean — is what lets clustering order
-    signals chronologically.
+    3 consecutive steps — the same robust rule used across the verification
+    experiments. The spread is the robust sigma estimate ``1.4826 * MAD``
+    (the same calibration ``ChangePointDetector`` uses), so "3σ" is a real
+    three-sigma threshold, not ``3 * raw_MAD`` (which is ≈2σ under normality).
+    Returns the step index of the first crossing (i.e. the step where the
+    3-step run began), or None when the signal never crosses. The step index
+    — not a boolean — is what lets clustering order signals chronologically.
     """
     if len(values) < 50:
         return None
     base = values[:40]
     med = sorted(base)[len(base) // 2]
     mad = sorted(abs(v - med) for v in base)[len(base) // 2]
-    threshold = med + 3.0 * mad
+    threshold = med + 3.0 * mad * 1.4826
     run = 0
     for i in range(40, len(values)):
         v = values[i]
