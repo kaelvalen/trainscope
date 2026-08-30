@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - Calibration & Dead-Code Fixes
+
+### Fixed
+- **Crossing thresholds were ~2σ, not the documented 3σ.** `first_crossing_step` (cluster/report/counterexample) and the verification scripts used `median + 3 × raw_MAD`, which under normality is ≈2.02σ. Spread is now scaled by `1.4826` (the robust-sigma estimate the CUSUM detector already used), making the thresholds true three-sigma crossings consistent with the detector. Cluster labels, report leads, and counterexample results shift slightly; the README's activation-kurtosis lead (14–18 steps) is flagged as pending re-measurement under the calibrated threshold.
+- **PELT path was dead code, and its trigger semantics were unsound.** `ChangePointDetector`'s PELT branch compared the second-to-last breakpoint against the series length `n`, but `ruptures.predict()` always ends with `n` (breakpoints are segment ends, sorted), so `change_points[-2] < n` always — the branch never ran even with `ruptures` installed, and the tests faked it with `[n, n]` output no real library produces. Two separate fixes surfaced two more problems, then the design was corrected:
+  - The check now fires on a "change now" defined against `min_size` (final segment no longer than `min_size`), which real output can satisfy.
+  - Once live, PELT (a from-scratch per-step fit with no sequential correction) triggered on ~2% of noise steps — categorically different from CUSUM's calibrated <0.05% false-alarm design. PELT is now **gated behind a fired CUSUM**: it only refines the score's magnitude (raw median/MAD deviation instead of the clamped cumulative sum) and never triggers independently. This also removes the per-step PELT `fit+predict` cost on every `update()`.
+  - **Retraction (0.6.0):** "PELT-triggered spikes return the raw deviation" is withdrawn — the branch never ran, and as an independent trigger it breaks the calibrated false-alarm guarantee. The 0.6.0 changelog entry's PELT description is superseded by the 1.8.1 design above.
+- **DiskWriter memory grew unboundedly.** `_all_global_rows` (and layer/plugin/MoE equivalents) accumulated the whole run in RAM with O(n²) list copies, even though the on-disk footprint was bounded. Compaction now reads the file back and keeps only the current window in memory; new total counters keep manifest totals correct.
+- **Verification scripts hardcoded a developer's cache path.** Six `scripts/verify_*.py` defaulted `--data` to `/home/kael/.cache/...`, so anyone else hit `FileNotFoundError`. `scripts/_wikitext.py` resolves wikitext-2 from the Hugging Face datasets cache (lazily, only when `--data` is absent) with an actionable download hint.
+
+### Changed
+- `ruptures` moved into the `dev` extra so CI runs the real PELT integration tests (which caught the min_size and false-alarm issues the mocks could not).
+- Detector robustness/held-out calibration tests are explicitly parametrized over `with_pelt` (True/False), so their behavior no longer silently depends on whether `ruptures` happens to be installed.
+
 ## [1.8.0] - Post-Mortem Platform
 
 ### Added
