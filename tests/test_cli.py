@@ -35,7 +35,7 @@ def test_version(runner):
 def test_ui_rejects_missing_run(runner):
     result = runner.invoke(cli, ["ui", "--run", "/nonexistent/path"])
     assert result.exit_code != 0
-    assert "does not exist" in result.output or "Invalid value" in result.output
+    assert "Run directory not found" in result.output
 
 
 def test_ui_starts_server(runner, tmp_path: Path):
@@ -344,3 +344,95 @@ def test_report_requires_exactly_one_of_run_or_runs(runner, tmp_path: Path):
     result = runner.invoke(cli, ["report", "--run", str(run_dir), "--runs", str(run_dir)])
     assert result.exit_code != 0
     assert "exactly one" in result.output
+
+
+# --------------------------------------------------------------------- #
+# Remote (fsspec URI) support
+# --------------------------------------------------------------------- #
+def _write_to_memory(uri: str, files: dict[str, bytes]) -> None:
+    """Populate an fsspec memory filesystem from {relative_path: bytes}."""
+    import fsspec
+
+    fs = fsspec.filesystem("memory")
+    for rel, content in files.items():
+        with fs.open(f"{uri}/{rel}", "wb") as f:
+            f.write(content)
+
+
+def _run_bytes(meta: dict, global_rows: list[dict]) -> dict[str, bytes]:
+    """Build the raw files for a minimal run in an fsspec memory tree."""
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+
+    from trainscope.io.writer import GLOBAL_SCHEMA
+
+    meta_bytes = json.dumps(meta).encode()
+    table = pa.Table.from_pylist(global_rows, schema=GLOBAL_SCHEMA)
+    bio = pa.BufferOutputStream()
+    with ipc.new_file(bio, GLOBAL_SCHEMA) as writer:
+        writer.write_table(table)
+    return {"meta.json": meta_bytes, "global.arrow": bio.getvalue().to_pybytes()}
+
+
+def test_ui_materializes_remote_runs_root(runner):
+    """--runs with an fsspec URI is materialized to a local tree before the
+    server starts."""
+    import fsspec
+
+    root = "memory://bucket/trainscope_runs"
+    run_a = _run_bytes(
+        {"model_name": "M", "trainscope_config": {"run_name": "run_a"}},
+        [{"step": i, "loss": 1.0, "batch_index": i, "is_spike": False} for i in range(3)],
+    )
+    _write_to_memory(f"{root}/run_a", run_a)
+
+    with patch("trainscope.ui.server.start_server") as mock_start:
+        result = runner.invoke(cli, ["ui", "--runs", root])
+    assert result.exit_code == 0, result.output
+
+    mock_start.assert_called_once()
+    args, kwargs = mock_start.call_args
+    local_root = kwargs.get("runs_root") or args[0]
+    assert not local_root.startswith("memory://")
+    assert (Path(local_root) / "run_a" / "global.arrow").exists()
+    assert (Path(local_root) / "run_a" / "meta.json").exists()
+
+    # The memory filesystem must not have been mutated; the materialized copy
+    # is what the server reads.
+    fs = fsspec.filesystem("memory")
+    assert fs.exists(f"{root}/run_a/global.arrow")
+
+
+def test_report_materializes_remote_run(runner):
+    """--run with an fsspec URI is materialized before analysis."""
+    uri = "memory://bucket/reports/run_a"
+    _write_to_memory(
+        uri,
+        _run_bytes(
+            {"model_name": "MiniGPT", "trainscope_config": {"run_name": "run_a"}},
+            [{"step": i, "loss": float(i), "batch_index": i, "is_spike": False} for i in range(3)],
+        ),
+    )
+
+    result = runner.invoke(cli, ["report", "--run", uri])
+    assert result.exit_code == 0, result.output
+    assert "Post-mortem: run_a" in result.output
+    assert "- Model: MiniGPT" in result.output
+
+
+def test_report_materializes_remote_runs_root(runner):
+    """--runs with an fsspec URI materializes the whole root before the
+    cluster report runs."""
+    root = "memory://bucket/reports_root"
+    _write_to_memory(
+        f"{root}/run_a",
+        _run_bytes(
+            {"model_name": "M", "trainscope_config": {"run_name": "run_a"}},
+            [{"step": i, "loss": 1.0, "batch_index": i, "is_spike": False} for i in range(3)],
+        ),
+    )
+
+    result = runner.invoke(cli, ["report", "--runs", root])
+    assert result.exit_code == 0, result.output
+    assert "# Run behavior clusters (1 runs)" in result.output
+    assert "## Stable (no signal) runs" in result.output

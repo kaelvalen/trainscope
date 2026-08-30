@@ -144,6 +144,10 @@ trainscope ui --run ./trainscope_runs/run_20250516_143022 \
 # point), config differences, and shared causes among spiked runs.
 trainscope ui --runs ./trainscope_runs
 
+# Local paths and fsspec URIs both work; remote trees (s3://, gs://) are
+# materialized to a local cache before the UI starts.
+trainscope ui --runs s3://bucket/trainscope_runs
+
 # Print version
 trainscope --version
 

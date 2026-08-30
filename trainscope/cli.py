@@ -55,24 +55,12 @@ def cli() -> None:
 @click.option(
     "--run",
     default=None,
-    type=click.Path(
-        exists=True,
-        file_okay=False,
-        readable=True,
-        path_type=Path,
-    ),
-    help="Path to a single trainscope run directory",
+    help="Path (or s3:///gs:// URI) to a single trainscope run directory",
 )
 @click.option(
     "--runs",
     default=None,
-    type=click.Path(
-        exists=True,
-        file_okay=False,
-        readable=True,
-        path_type=Path,
-    ),
-    help="Path to a root directory containing multiple run directories",
+    help="Path (or s3:///gs:// URI) to a root directory of run directories",
 )
 @click.option("--host", default="127.0.0.1", show_default=True)
 @click.option("--port", default=7007, show_default=True, type=int)
@@ -85,25 +73,37 @@ def cli() -> None:
         case_sensitive=False,
     ),
 )
-def ui(run: Path | None, runs: Path | None, host: str, port: int, log_level: str) -> None:
-    """Start the TrainScope web UI for a run (or a directory of runs)."""
+def ui(run: str | None, runs: str | None, host: str, port: int, log_level: str) -> None:
+    """Start the TrainScope web UI for a run (or a directory of runs).
+
+    ``--run`` and ``--runs`` accept either a local path or an fsspec URI such
+    as ``s3://bucket/trainscope_runs``. Remote trees are materialized into a
+    local cache (a snapshot) before the UI starts.
+    """
+    from trainscope.io.remotes import materialize_run_path
     from trainscope.ui.server import start_server
 
     if (run is None) == (runs is None):
         raise click.ClickException("Specify exactly one of --run or --runs")
 
     if run is not None:
-        click.echo(f"Starting TrainScope UI for run: {run}")
-        start_server(str(run.resolve()), host=host, port=port, log_level=log_level)
+        local = materialize_run_path(run)
+        if not local.exists() or not local.is_dir():
+            raise click.ClickException(f"Run directory not found: {run}")
+        click.echo(f"Starting TrainScope UI for run: {local}")
+        start_server(str(local.resolve()), host=host, port=port, log_level=log_level)
     else:
         assert runs is not None
-        click.echo(f"Starting TrainScope UI for runs under: {runs}")
+        local = materialize_run_path(runs)
+        if not local.exists() or not local.is_dir():
+            raise click.ClickException(f"Runs root directory not found: {runs}")
+        click.echo(f"Starting TrainScope UI for runs under: {local}")
         start_server(
-            str(runs.resolve()),
+            str(local.resolve()),
             host=host,
             port=port,
             log_level=log_level,
-            runs_root=str(runs.resolve()),
+            runs_root=str(local.resolve()),
         )
     click.echo(f"Open http://{host}:{port} in your browser")
 
@@ -189,14 +189,12 @@ def replay(checkpoint: Path, skip_batches: str, resume: bool, output: Path) -> N
 @click.option(
     "--run",
     default=None,
-    type=click.Path(exists=True, file_okay=False, readable=True, path_type=Path),
-    help="Path to a single trainscope run directory",
+    help="Path (or s3:///gs:// URI) to a single trainscope run directory",
 )
 @click.option(
     "--runs",
     default=None,
-    type=click.Path(exists=True, file_okay=False, readable=True, path_type=Path),
-    help="Path to a root directory containing multiple run directories",
+    help="Path (or s3:///gs:// URI) to a root directory of run directories",
 )
 @click.option(
     "--format",
@@ -211,16 +209,20 @@ def replay(checkpoint: Path, skip_batches: str, resume: bool, output: Path) -> N
     type=click.Path(dir_okay=False, writable=True, path_type=Path),
     help="Write the report to a file instead of stdout",
 )
-def report(run: Path | None, runs: Path | None, fmt: str, output: Path | None) -> None:
+def report(run: str | None, runs: str | None, fmt: str, output: Path | None) -> None:
     """Generate a post-mortem report for a run (or a root of runs).
 
     A single-run report is the researcher's case file: the spike story, the
     early-warning signals that fired with their lead, and the config. A
     multi-run report groups runs by signal signature (the same clustering the
     Runs view shows) so shared failure modes are visible from the shell.
+
+    ``--run`` and ``--runs`` accept local paths or fsspec URIs; remote trees
+    are materialized to a local cache before analysis.
     """
     import asyncio
 
+    from trainscope.io.remotes import materialize_run_path
     from trainscope.report import build_report, render
 
     if (run is None) == (runs is None):
@@ -230,7 +232,11 @@ def report(run: Path | None, runs: Path | None, fmt: str, output: Path | None) -
     assert target is not None
     multi_run = runs is not None
 
-    report_data = asyncio.run(build_report(target, multi_run))
+    local = materialize_run_path(target)
+    if not local.exists() or not local.is_dir():
+        raise click.ClickException(f"Run target not found: {target}")
+
+    report_data = asyncio.run(build_report(local, multi_run))
     text = render(report_data, multi_run, fmt)
 
     if output is not None:

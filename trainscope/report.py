@@ -83,8 +83,13 @@ async def build_run_report(run_dir: Path) -> dict[str, Any]:
         if first in first_steps and first_steps[first] is not None:
             lead = sig["explosion_step"] - first_steps[first]
 
+    # The run's own name from its config, not the directory we happened to
+    # read it from — a remote URI materialized into a temp dir would otherwise
+    # report the temp dir's name.
+    run_name = (meta.get("trainscope_config") or {}).get("run_name") or run_dir.name
+
     return {
-        "run": run_dir.name,
+        "run": run_name,
         "config": _config_preview(meta),
         "model_config": meta.get("model_config"),
         "signal_signature": {
