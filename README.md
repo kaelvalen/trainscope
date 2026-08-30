@@ -38,11 +38,15 @@ Loss spikes in large language model training are expensive. Existing tools log a
 - **Activation kurtosis**: Excess kurtosis of per-block activations rises before divergence. Verified on the same organic mini-GPT-2/wikitext-2 scenario as the CUSUM claim: kurtosis crossed its robust baseline margin 14–18 steps (mean 16.7) before loss divergence — *earlier* than CUSUM's 9–11 step detection (see `scripts/verify_kurtosis_early_warning.py`). Note this supersedes the earlier "1–5 steps" estimate, which was not reproduced; kurtosis leads by more than CUSUM, not less.
 - **Chronological Spike Story Cascade**: Traces failure cascades chronologically (`Loss Shift` → `Gradient Explosion` → `NaN Collapse`) to isolate root causes instead of terminal symptoms.
 - **Gradient L2 norms**: Per-layer breakdowns show exactly which transformer block initiated the update instability.
+- **Run behavior clustering**: Runs are grouped by their early-warning signal signature; each cluster reports its typical early-warning lead, the config traits its members share that stable runs do not, the common-fate loss band, and a nearest-stable-run counterexample — "why did THESE runs blow up and not the others".
+- **Post-mortem reports**: `trainscope report` turns a run (or a whole runs root) into a markdown/JSON case file with the spike story, fired signals, and cluster summary.
+- **Replay planning**: `trainscope replay` writes a `replay_config.json`; the Replay view shows exactly which training steps its skip list maps to.
+- **Remote storage**: Run trees on `s3://`/`gs://` are readable by the UI and CLI via fsspec materialization.
 - **WandB Zero-Config Integration**: Auto-detects active `wandb.run` sessions for passive logging, with opt-in alerting (`integrations={"wandb": {"alerts": True}}`).
 - **Weight histograms + KL divergence**: Compare parameter distributions before and after the spike.
 - **RNG state + optional checkpoint**: At the spike step for exact replay.
 
-All data is written to local Arrow files; the UI is a lightweight standalone FastAPI server with lazy-loaded views and Plotly (initial shell ~60KB gzipped; the 4.9MB Plotly bundle is fetched only when the first chart renders) and incremental WebSocket live streaming.
+All data is written to Arrow files (locally or to a remote store via fsspec); the UI is a lightweight standalone FastAPI server with lazy-loaded views and Plotly (initial shell ~60KB gzipped; the 4.9MB Plotly bundle is fetched only when the first chart renders) and incremental WebSocket live streaming for loss, spikes, layers, and MoE routing shares.
 
 ## Quick start
 
@@ -62,7 +66,7 @@ for step, batch in enumerate(dataloader):
     optimizer.step()
 
     if spike:
-        print(f"Spike at step {spike['step']}, z={spike['z_score']:.2f}")
+        print(f"Spike at step {spike['step']}, score={spike['spike_score']:.2f}")
 
 scope.detach()
 ```
@@ -114,13 +118,15 @@ trainscope ui --run ./trainscope_runs/<run-name>
 
 ## Browser UI
 
-Four views, one command:
+Seven views, one command:
 
 | View | What it shows |
 |------|---------------|
+| **Runs** | Every run under a root side by side — model, detector, last loss, spike count — plus run behavior clusters, cluster discriminant config traits, the common-fate loss band, and nearest-stable-run counterexample analysis |
 | **Timeline** | Loss + grad norm, top-8 layers by gradient variance, live WebSocket streaming |
 | **Layer Drill-down** | Kurtosis / grad norm / weight norm per layer with histogram scrubber |
-| **Diff View** | KL divergence of weight distributions between any two steps |
+| **Routing & addressing** | Per-expert and per-slot share series over time, live-streamed over WebSocket |
+| **Diff View** | KL divergence of weight distributions between any two steps, with per-layer gradient-norm change |
 | **Spike Inspector** | **Spike Story Flow**: Chronological root cause cascade diagnosis & layer breakdown |
 | **Replay** | The run's generated `replay_config.json` with the training steps its skip list maps to |
 
@@ -201,16 +207,18 @@ TrainScopeConfig(
     checkpoint_on_spike=None,               # True, path template, or None/False
     rng_every_n_steps=0,                    # save RNG every N steps (0 = only spikes)
     resume=False,                           # append to existing Arrow files
+    storage_uri=None,                       # s3:///gs:// URI for remote storage
 )
 ```
 
 ### Notable options
 
 - **`device`** — `None` computes metrics on CPU to avoid GPU synchronization; set to `"cuda"` to force GPU.
-- **`detector`** — Selects the anomaly detector: `detector="changepoint"` (default, CUSUM) or `detector={"name": "z_score", "threshold": 3.5}` for the rolling z-score. Detector thresholds live inside this dict — there is no top-level `spike_threshold` since 1.0, because each detector's threshold is on a different scale (CUSUM's cumulative-sum decision threshold vs. a raw z-score cutoff).
+- **`detector`** — Selects the anomaly detector: `detector="changepoint"` (default, CUSUM) or `detector={"name": "z_score", "threshold": 3.5}` for the rolling z-score. Detector thresholds live inside this dict — there is no top-level `spike_threshold` since 1.0, because each detector's threshold is on a different scale (CUSUM's cumulative-sum decision threshold vs. a raw z-score cutoff). Architecture-aware detectors: `expert_utilization_drift` (default threshold 0.85, routing concentration in MoE models) and `addressor_concentration_drift` (default threshold 0.6, slot concentration in memory-augmented models).
 - **`checkpoint_on_spike`** — Save `model.state_dict()` (and optimizer state if available) on spike. `True` writes `checkpoints/{step}.pt`; a string is a `{step}` path template.
 - **`rng_every_n_steps`** — Save RNG state periodically in addition to spike steps.
 - **`resume`** — Append to existing Arrow files instead of overwriting.
+- **`storage_uri`** — Write to a remote store (`s3://`, `gs://`, `az://`, `file://`) via fsspec instead of the local `DiskWriter`. Remote objects are rewritten on the compaction cadence (no native append), so remote artifacts lag by up to `compaction_every_n_steps` steps.
 
 ## Storage layout
 
@@ -220,6 +228,8 @@ trainscope_runs/<run-name>/
     manifest.json                      summary of files and latest step
     global.arrow                       step-level scalars (Arrow IPC)
     layers/<param-name>.arrow          per-layer metrics (percent-encoded filenames)
+    moe.arrow                          per-block routing/addressing shares (MoE & addressor)
+    plugin_metrics.arrow               plugin metric rows (step, plugin, metric, value)
     spikes/spike_step_<N>.arrow        global window around spike N
     spikes/spike_step_<N>_layers/      per-layer data for that window
     rng_states/step_<N>.pkl            RNG state for replay
