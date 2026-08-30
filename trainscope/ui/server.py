@@ -915,19 +915,25 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
             )
         return await read_arrow(path)
 
-    async def _get_diff_index() -> dict[str, dict[int, list[float]]]:
+    async def _get_diff_index() -> dict[str, dict[int, dict[str, Any]]]:
         cached = _cache.get("diff_index")
         if cached is not None:
-            return cast(dict[str, dict[int, list[float]]], cached)
+            return cast(dict[str, dict[int, dict[str, Any]]], cached)
 
-        index: dict[str, dict[int, list[float]]] = {}
+        index: dict[str, dict[int, dict[str, Any]]] = {}
         layers_dir = rp / "layers"
         if await anyio.to_thread.run_sync(layers_dir.exists):
             files = await anyio.to_thread.run_sync(lambda: sorted(layers_dir.glob("*.arrow")))
             for arrow_file in files:
                 rows = await read_arrow(arrow_file)
                 layer_name = _decode_layer_name(arrow_file.name)
-                index[layer_name] = {r["step"]: r.get("hist_counts") or [] for r in rows}
+                index[layer_name] = {
+                    r["step"]: {
+                        "hist_counts": r.get("hist_counts") or [],
+                        "grad_l2_norm": r.get("grad_l2_norm"),
+                    }
+                    for r in rows
+                }
         _cache.set("diff_index", index)
         return index
 
@@ -938,14 +944,29 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         index = await _get_diff_index()
         result: list[dict[str, Any]] = []
         for layer_name, step_map in index.items():
-            counts_a = step_map.get(params.step_a)
-            counts_b = step_map.get(params.step_b)
+            entry_a = step_map.get(params.step_a)
+            entry_b = step_map.get(params.step_b)
+            if not entry_a or not entry_b:
+                continue
+            counts_a = entry_a.get("hist_counts") or []
+            counts_b = entry_b.get("hist_counts") or []
             if not counts_a or not counts_b:
                 continue
+            # Gradient-norm change between the two steps, when both recorded
+            # a norm: the layer-level version of "did this layer's update
+            # blow up between A and B" that KL on weights cannot see directly.
+            grad_a = entry_a.get("grad_l2_norm")
+            grad_b = entry_b.get("grad_l2_norm")
+            grad_norm_change = (
+                round(float(grad_b) - float(grad_a), 6)
+                if isinstance(grad_a, (int, float)) and isinstance(grad_b, (int, float))
+                else None
+            )
             result.append(
                 {
                     "layer": layer_name,
                     "kl_divergence": _safe_kl(counts_a, counts_b),
+                    "grad_norm_change": grad_norm_change,
                 }
             )
         result.sort(key=lambda x: x["kl_divergence"], reverse=True)
