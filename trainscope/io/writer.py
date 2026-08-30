@@ -459,8 +459,7 @@ class DiskWriter:
             "last_step": last_step,
             "n_global_rows": self._n_global_rows + len(self._global_buffer),
             "layer_files": layer_files,
-            "n_plugin_metric_rows": self._n_plugin_metric_rows
-            + len(self._plugin_metrics_buffer),
+            "n_plugin_metric_rows": self._n_plugin_metric_rows + len(self._plugin_metrics_buffer),
             "n_moe_rows": self._n_moe_rows + len(self._moe_buffer),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
