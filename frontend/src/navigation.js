@@ -1,4 +1,4 @@
-import { Activity, FolderKanban, GitCompare, Layers3, Network, Zap } from 'lucide-react'
+import { Activity, FolderKanban, GitCompare, Layers3, Network, RotateCcw, Zap } from 'lucide-react'
 
 export const NAV_ITEMS = [
   {
@@ -48,5 +48,13 @@ export const NAV_ITEMS = [
     description: 'Turn a loss spike into a chronological root-cause story.',
     shortcut: '6',
     icon: Zap,
+  },
+  {
+    id: 'replay',
+    label: 'Replay',
+    eyebrow: 'Resume plan',
+    description: 'See which training steps a generated replay plan will skip.',
+    shortcut: '7',
+    icon: RotateCcw,
   },
 ]

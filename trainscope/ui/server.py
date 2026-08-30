@@ -862,6 +862,40 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         """Per-block expert routing shares for the active run (MoE models)."""
         return await _read_arrow(rp / "moe.arrow")
 
+    @app.get("/api/replay")
+    async def get_replay() -> dict[str, Any]:
+        """Replay plan for the active run, if one was generated.
+
+        ``trainscope replay`` writes ``replay_config.json`` next to the run
+        (or wherever the user pointed --output). This endpoint reads it and
+        maps each skipped batch index onto the training steps that consumed
+        that batch (via ``batch_index`` in global.arrow), so the UI can show
+        *which steps the replay will skip* — not just which batch indices.
+        Returns empty lists when no replay config exists.
+        """
+        replay_path = rp / "replay_config.json"
+        config: dict[str, Any] | None = None
+        if await anyio.to_thread.run_sync(replay_path.exists):
+            config = await _read_json_optional(replay_path)
+
+        skipped_batches = set((config or {}).get("skip_batches") or [])
+        global_rows = await _read_arrow(rp / "global.arrow")
+
+        # Steps whose batch_index is in the skip set. batch_index may be -1
+        # (not recorded) or absent in old runs; those steps are never matched.
+        skipped_steps = sorted(
+            row.get("step")
+            for row in global_rows
+            if row.get("batch_index") in skipped_batches and row.get("step") is not None
+        )
+
+        return {
+            "config": config,
+            "skipped_batches": sorted(skipped_batches),
+            "skipped_steps": skipped_steps,
+            "n_global_steps": len(global_rows),
+        }
+
     @app.get("/api/layers/ranked")
     async def get_layers_ranked(
         params: Annotated[RankedParams, Depends()],

@@ -170,6 +170,10 @@ export async function fetchMoe() {
   return request('/moe')
 }
 
+export async function fetchReplay() {
+  return request('/replay')
+}
+
 export async function fetchSpikes() {
   return request('/spikes')
 }
