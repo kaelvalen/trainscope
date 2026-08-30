@@ -93,7 +93,7 @@ export default function DiffView() {
             </CardTitle>
             <p className="chart-card__description">
               Find the layers whose weight distributions changed most between checkpoints. The
-              Δgrad badge shows each layer's gradient-norm change between the two steps.
+              Δgrad badge shows each layer&apos;s gradient-norm change between the two steps.
             </p>
           </div>
         </CardHeader>
