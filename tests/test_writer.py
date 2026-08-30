@@ -412,6 +412,37 @@ class TestDiskWriter:
         rows = read_arrow_rows_sync(run_path / "global.arrow")
         assert [r["step"] for r in rows] == list(range(25))
 
+    def test_in_memory_rows_stay_bounded_by_compaction(self, tmp_path):
+        """Long runs must not grow `_all_global_rows` unboundedly: after each
+        compaction the in-memory history is dropped to the current window, so
+        RAM is bounded by compaction_every_n_steps rows regardless of how
+        many total rows were ever written."""
+        config = TrainScopeConfig(
+            run_dir=str(tmp_path), run_name="test_run", compaction_every_n_steps=10
+        )
+        run_path = tmp_path / "test_run"
+        writer = DiskWriter(run_path, config)
+
+        # Write far more rows than the compaction window across many
+        # compactions; memory must never hold more than the window.
+        for i in range(500):
+            writer.append_global(make_global_snap(i))
+            writer.flush()
+
+        assert len(writer._all_global_rows) <= 10
+        writer.close()
+
+        # The on-disk file still holds every row.
+        rows = read_arrow_rows_sync(run_path / "global.arrow")
+        assert [r["step"] for r in rows] == list(range(500))
+
+        # Manifest totals reflect the full history, not the memory window.
+        import json
+
+        with open(run_path / "manifest.json") as f:
+            manifest = json.load(f)
+        assert manifest["n_global_rows"] == 500
+
     def test_truncated_tail_is_dropped_not_fatal(self, tmp_path):
         """A file whose tail was cut mid-message (simulated crash) must still
         yield all complete rows instead of failing the whole read."""

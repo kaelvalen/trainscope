@@ -315,12 +315,17 @@ class DiskWriter:
 
         # Full in-memory row lists drive compactions (full rewrite every
         # compaction_every_n_steps rows) and hold rows reloaded on resume.
+        # Only the current compaction window is kept in memory: compaction
+        # reads the on-disk file back, so long runs do not grow these lists
+        # unboundedly.
         self._all_global_rows: list[dict] = []
         self._all_layer_rows: dict[str, list[dict]] = {}
         self._all_plugin_metrics_rows: list[dict] = []
         self._all_moe_rows: list[dict] = []
-        # Total number of global rows persisted (including rows loaded for resume).
+        # Total number of persisted rows (including rows loaded for resume).
         self._n_global_rows = 0
+        self._n_plugin_metric_rows = 0
+        self._n_moe_rows = 0
         # Highest step number seen via append_global (or loaded for resume).
         self._last_step: int | None = None
         # Set of layer names for which a layer Arrow file exists or will exist.
@@ -413,6 +418,7 @@ class DiskWriter:
         if plugin_metrics_path.exists():
             try:
                 self._all_plugin_metrics_rows = read_arrow_rows_sync(plugin_metrics_path)
+                self._n_plugin_metric_rows = len(self._all_plugin_metrics_rows)
                 self._needs_compaction.add("plugin")
             except Exception:
                 logger.exception("Failed to resume plugin_metrics.arrow")
@@ -421,6 +427,7 @@ class DiskWriter:
         if moe_path.exists():
             try:
                 self._all_moe_rows = read_arrow_rows_sync(moe_path)
+                self._n_moe_rows = len(self._all_moe_rows)
                 self._needs_compaction.add("moe")
             except Exception:
                 logger.exception("Failed to resume moe.arrow")
@@ -452,9 +459,9 @@ class DiskWriter:
             "last_step": last_step,
             "n_global_rows": self._n_global_rows + len(self._global_buffer),
             "layer_files": layer_files,
-            "n_plugin_metric_rows": len(self._all_plugin_metrics_rows)
+            "n_plugin_metric_rows": self._n_plugin_metric_rows
             + len(self._plugin_metrics_buffer),
-            "n_moe_rows": len(self._all_moe_rows) + len(self._moe_buffer),
+            "n_moe_rows": self._n_moe_rows + len(self._moe_buffer),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
         with open(self._run_path / "manifest.json", "w") as f:
@@ -574,8 +581,16 @@ class DiskWriter:
         ):
             self._needs_compaction.discard("global")
             self._close_stream(self._global_stream)
+            # Rebuild the full file from what is already on disk plus the new
+            # rows, then drop the accumulated in-memory history so long runs
+            # do not grow `_all_global_rows` unboundedly (the on-disk file is
+            # the source of truth; memory keeps only the current window).
+            on_disk = read_arrow_rows_sync(self._global_path())
+            all_rows = on_disk + rows
+            self._all_global_rows = rows
+            self._n_global_rows = len(all_rows)
             self._global_stream = self._reopen_compacted_stream(
-                self._global_path(), GLOBAL_SCHEMA, self._all_global_rows, _make_global_batch
+                self._global_path(), GLOBAL_SCHEMA, all_rows, _make_global_batch
             )
             self._global_rows_since_compaction = 0
             return
@@ -601,10 +616,15 @@ class DiskWriter:
         if key in self._needs_compaction or n_since >= self._config.compaction_every_n_steps:
             self._needs_compaction.discard(key)
             self._close_stream(self._layer_streams.pop(layer_name, None))
+            # Same bounded-memory compaction as the global stream: rebuild
+            # from disk + new rows, keep only the current window in memory.
+            on_disk = read_arrow_rows_sync(self._layer_path(layer_name))
+            all_rows = on_disk + rows
+            self._all_layer_rows[layer_name] = rows
             self._layer_streams[layer_name] = self._reopen_compacted_stream(
                 self._layer_path(layer_name),
                 LAYER_SCHEMA,
-                self._all_layer_rows[layer_name],
+                all_rows,
                 _make_layer_batch,
             )
             self._layer_rows_since_compaction[layer_name] = 0
@@ -625,6 +645,7 @@ class DiskWriter:
         rows = self._plugin_metrics_buffer
         self._plugin_metrics_buffer = []
         self._all_plugin_metrics_rows = self._all_plugin_metrics_rows + rows
+        self._n_plugin_metric_rows = len(self._all_plugin_metrics_rows)
 
         self._plugin_rows_since_compaction += len(rows)
         if (
@@ -633,10 +654,13 @@ class DiskWriter:
         ):
             self._needs_compaction.discard("plugin")
             self._close_stream(self._plugin_stream)
+            on_disk = read_arrow_rows_sync(self._plugin_metrics_path())
+            all_rows = on_disk + rows
+            self._all_plugin_metrics_rows = rows
             self._plugin_stream = self._reopen_compacted_stream(
                 self._plugin_metrics_path(),
                 PLUGIN_METRICS_SCHEMA,
-                self._all_plugin_metrics_rows,
+                all_rows,
                 _make_plugin_metrics_batch,
             )
             self._plugin_rows_since_compaction = 0
@@ -657,6 +681,7 @@ class DiskWriter:
         rows = self._moe_buffer
         self._moe_buffer = []
         self._all_moe_rows = self._all_moe_rows + rows
+        self._n_moe_rows = len(self._all_moe_rows)
 
         self._moe_rows_since_compaction += len(rows)
         if (
@@ -665,8 +690,11 @@ class DiskWriter:
         ):
             self._needs_compaction.discard("moe")
             self._close_stream(self._moe_stream)
+            on_disk = read_arrow_rows_sync(self._moe_path())
+            all_rows = on_disk + rows
+            self._all_moe_rows = rows
             self._moe_stream = self._reopen_compacted_stream(
-                self._moe_path(), MOE_SCHEMA, self._all_moe_rows, _make_moe_batch
+                self._moe_path(), MOE_SCHEMA, all_rows, _make_moe_batch
             )
             self._moe_rows_since_compaction = 0
             return
