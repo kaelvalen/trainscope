@@ -364,8 +364,12 @@ class TestChangePointDetector:
                 return self
 
             def predict(self, pen):
-                # Always report a change point at the current observation.
-                return [len(self._signal), len(self._signal)]
+                # A real ruptures Pelt.predict() returns segment-end
+                # breakpoints ending with the series length n; a change
+                # "right now" means the final segment holds only the current
+                # observation, i.e. the last breakpoint is n - 1.
+                n = len(self._signal)
+                return [n - 1, n]
 
         class _FakeRpt:
             Pelt = _FakePelt
@@ -400,7 +404,8 @@ class TestChangePointDetector:
                 return self
 
             def predict(self, pen):
-                return [len(self._signal), len(self._signal)]
+                n = len(self._signal)
+                return [n - 1, n]
 
         class _FakeRpt:
             Pelt = _FakePelt
@@ -419,6 +424,73 @@ class TestChangePointDetector:
         assert res == pytest.approx(expected)
         assert res < 0
         assert abs(res) < 6.0
+
+    def test_pelt_requires_change_at_current_observation(self, monkeypatch):
+        """The PELT path must only fire when the change is *now*: a change
+        point earlier in the window (real ruptures output, last breakpoint
+        n - 1) fires; a change not at the tail (last breakpoint << n) must
+        not, so the CUSUM baseline is not corrupted by stale history."""
+        from trainscope.core.detectors import changepoint as cp_mod
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        class _FakePelt:
+            def __init__(self, *args, **kwargs):
+                self._signal: list = []
+
+            def fit(self, signal):
+                self._signal = signal
+                return self
+
+            def predict(self, pen):
+                n = len(self._signal)
+                # Real ruptures output: the last breakpoint is n, and the
+                # change is NOT at the current observation (old change).
+                return [n - 10, n]
+
+        class _FakeRpt:
+            Pelt = _FakePelt
+
+        monkeypatch.setattr(cp_mod, "rpt", _FakeRpt)
+
+        det = ChangePointDetector(threshold=6.0, min_observations=10)
+        for _ in range(20):
+            det.update(1.0)
+            det.update(1.1)
+
+        # A PELT change 10 steps back must NOT fire (falls through to CUSUM,
+        # whose z = 2.02 < threshold=6.0, so nothing is returned either).
+        assert det.update(1.2) is None
+
+    def test_pelt_ignores_impossible_predict_output(self, monkeypatch):
+        """The old dead-code check compared against n, which no real ruptures
+        output equals ([..., n, n] never happens). That exact impossible
+        output must no longer trigger the PELT path."""
+        from trainscope.core.detectors import changepoint as cp_mod
+        from trainscope.core.detectors.changepoint import ChangePointDetector
+
+        class _FakePelt:
+            def __init__(self, *args, **kwargs):
+                self._signal: list = []
+
+            def fit(self, signal):
+                self._signal = signal
+                return self
+
+            def predict(self, pen):
+                n = len(self._signal)
+                return [n, n]
+
+        class _FakeRpt:
+            Pelt = _FakePelt
+
+        monkeypatch.setattr(cp_mod, "rpt", _FakeRpt)
+
+        det = ChangePointDetector(threshold=6.0, min_observations=10)
+        for _ in range(20):
+            det.update(1.0)
+            det.update(1.1)
+
+        assert det.update(1.2) is None
 
 
 class TestExpertUtilizationDriftDetector:
