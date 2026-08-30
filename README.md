@@ -154,6 +154,12 @@ trainscope replay --checkpoint ./checkpoints/step_4400.pt \
 # Read skip batches from a file (one index or comma-separated list per line)
 trainscope replay --checkpoint ./checkpoints/step_4400.pt \
     --skip-batches @batches.txt
+
+# Generate a post-mortem report for one run (spike story, fired signals, lead)
+trainscope report --run ./trainscope_runs/run_20250516_143022 [--format markdown|json]
+
+# Report for every run under a root: cluster by signal signature
+trainscope report --runs ./trainscope_runs
 ```
 
 Use the generated config with `SkippingDataLoader` in your training script:

@@ -185,5 +185,60 @@ def replay(checkpoint: Path, skip_batches: str, resume: bool, output: Path) -> N
         )
 
 
+@cli.command()
+@click.option(
+    "--run",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, readable=True, path_type=Path),
+    help="Path to a single trainscope run directory",
+)
+@click.option(
+    "--runs",
+    default=None,
+    type=click.Path(exists=True, file_okay=False, readable=True, path_type=Path),
+    help="Path to a root directory containing multiple run directories",
+)
+@click.option(
+    "--format",
+    "fmt",
+    default="markdown",
+    show_default=True,
+    type=click.Choice(["markdown", "json"]),
+)
+@click.option(
+    "--output",
+    default=None,
+    type=click.Path(dir_okay=False, writable=True, path_type=Path),
+    help="Write the report to a file instead of stdout",
+)
+def report(run: Path | None, runs: Path | None, fmt: str, output: Path | None) -> None:
+    """Generate a post-mortem report for a run (or a root of runs).
+
+    A single-run report is the researcher's case file: the spike story, the
+    early-warning signals that fired with their lead, and the config. A
+    multi-run report groups runs by signal signature (the same clustering the
+    Runs view shows) so shared failure modes are visible from the shell.
+    """
+    import asyncio
+
+    from trainscope.report import build_report, render
+
+    if (run is None) == (runs is None):
+        raise click.ClickException("Specify exactly one of --run or --runs")
+
+    target = runs if runs is not None else run
+    assert target is not None
+    multi_run = runs is not None
+
+    report_data = asyncio.run(build_report(target, multi_run))
+    text = render(report_data, multi_run, fmt)
+
+    if output is not None:
+        output.write_text(text, encoding="utf-8")
+        click.echo(f"Report saved to {output.resolve()}")
+    else:
+        click.echo(text)
+
+
 if __name__ == "__main__":
     cli()
