@@ -61,6 +61,7 @@ import pyarrow.ipc as ipc
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from _wikitext import find_wikitext_arrow
 
 SEQ_LEN = 64
 BATCH = 12
@@ -79,12 +80,6 @@ BASE_LR = 1e-3
 MAXP_COLLAPSE = 0.85
 ENTROPY_COLLAPSE = 0.95
 COLLAPSE_RUN = 3
-
-DEFAULT_DATA = (
-    "/home/kael/.cache/huggingface/datasets/Salesforce___wikitext/"
-    "wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3/"
-    "wikitext-train.arrow"
-)
 
 
 class CausalSelfAttention(nn.Module):
@@ -297,10 +292,15 @@ def analyze(seed, scenario, losses, max_ps, norm_ents):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seeds", type=str, default="1,7,42")
-    parser.add_argument("--data", type=str, default=DEFAULT_DATA)
+    parser.add_argument(
+        "--data",
+        type=str,
+        default=None,
+        help="Path to wikitext-train.arrow (default: resolve from the HF cache)",
+    )
     args = parser.parse_args()
 
-    tokens, vocab = load_wikitext_chars(args.data)
+    tokens, vocab = load_wikitext_chars(args.data or find_wikitext_arrow())
     print(
         f"wikitext-2: {len(tokens)} chars, vocab={vocab}, heads={N_HEADS} layers={N_LAYERS}",
         flush=True,
