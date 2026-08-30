@@ -138,5 +138,3 @@ class ChangePointDetector(AnomalyDetector):
                 pass
 
         return float(score)
-
-        return None
