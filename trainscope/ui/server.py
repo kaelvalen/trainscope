@@ -984,6 +984,7 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
             last_global_len = 0
             last_spikes: set[int] = set()
             last_layers: set[str] = set()
+            last_moe_len = 0
             while True:
                 global_rows = await read_arrow(rp / "global.arrow")
                 if last_global_len == 0 and global_rows:
@@ -1005,6 +1006,15 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 if layers != last_layers:
                     await websocket.send_json({"type": "layers", "payload": sorted(layers)})
                     last_layers = layers
+
+                moe_rows = await read_arrow(rp / "moe.arrow")
+                if last_moe_len == 0 and moe_rows:
+                    await websocket.send_json({"type": "moe", "payload": moe_rows})
+                    last_moe_len = len(moe_rows)
+                elif len(moe_rows) > last_moe_len:
+                    new_moe = moe_rows[last_moe_len:]
+                    await websocket.send_json({"type": "moe_delta", "payload": new_moe})
+                    last_moe_len = len(moe_rows)
 
                 await asyncio.sleep(1.0)
         except WebSocketDisconnect:

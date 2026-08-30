@@ -7,7 +7,7 @@ import pyarrow.ipc as ipc
 import pytest
 from fastapi.testclient import TestClient
 
-from trainscope.io.writer import GLOBAL_SCHEMA, LAYER_SCHEMA
+from trainscope.io.writer import GLOBAL_SCHEMA, LAYER_SCHEMA, MOE_SCHEMA
 from trainscope.ui.server import create_app
 
 
@@ -273,6 +273,60 @@ def test_websocket_streams_only_new_global_rows(tmp_path):
             delta = websocket.receive_json()
             assert delta["type"] == "global_delta"
             assert [item["step"] for item in delta["payload"]] == [2]
+
+
+def test_websocket_streams_moe_rows(tmp_path):
+    """The WebSocket pushes the full moe.arrow as an initial 'moe' message
+    and appends only new rows as 'moe_delta', matching the global pattern."""
+    run = tmp_path / "live_moe"
+    run.mkdir()
+
+    def moe_row(step, shares):
+        return {"step": step, "block": "blocks.0.router", "shares": shares}
+
+    with TestClient(create_app(str(run))) as live_client:
+        with live_client.websocket_connect("/ws") as websocket:
+            assert websocket.receive_json()["type"] == "meta"
+            _write_arrow(
+                run / "moe.arrow",
+                MOE_SCHEMA,
+                [moe_row(0, [0.25, 0.25, 0.25, 0.25]), moe_row(1, [0.5, 0.2, 0.2, 0.1])],
+            )
+            initial = websocket.receive_json()
+            assert initial["type"] == "moe"
+            assert [item["step"] for item in initial["payload"]] == [0, 1]
+
+            _write_arrow(
+                run / "moe.arrow",
+                MOE_SCHEMA,
+                [
+                    moe_row(0, [0.25, 0.25, 0.25, 0.25]),
+                    moe_row(1, [0.5, 0.2, 0.2, 0.1]),
+                    moe_row(2, [0.9, 0.03, 0.03, 0.04]),
+                ],
+            )
+            delta = websocket.receive_json()
+            assert delta["type"] == "moe_delta"
+            assert [item["step"] for item in delta["payload"]] == [2]
+            assert delta["payload"][0]["shares"] == [0.9, 0.03, 0.03, 0.04]
+
+            # Closing and reopening the websocket resets the delta baseline.
+            _write_arrow(
+                run / "moe.arrow",
+                MOE_SCHEMA,
+                [
+                    moe_row(0, [0.25, 0.25, 0.25, 0.25]),
+                    moe_row(1, [0.5, 0.2, 0.2, 0.1]),
+                    moe_row(2, [0.9, 0.03, 0.03, 0.04]),
+                ],
+            )
+
+        with live_client.websocket_connect("/ws") as websocket:
+            assert websocket.receive_json()["type"] == "meta"
+            # Fresh connection sees the full rows again.
+            initial = websocket.receive_json()
+            assert initial["type"] == "moe"
+            assert len(initial["payload"]) == 3
 
 
 def test_layers(client):

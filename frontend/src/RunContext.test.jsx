@@ -18,10 +18,11 @@ class MockWebSocket {
 }
 
 function Probe() {
-  const { globalData, liveStatus } = useRun()
+  const { globalData, moeData, liveStatus } = useRun()
   return (
     <div>
       <output data-testid="row-count">{globalData.length}</output>
+      <output data-testid="moe-count">{moeData.length}</output>
       <output data-testid="live-status">{liveStatus}</output>
     </div>
   )
@@ -38,6 +39,7 @@ describe('RunProvider live updates', () => {
         '/api/global': [],
         '/api/layers': [],
         '/api/spikes': [],
+        '/api/moe': [],
         '/api/runs': [],
       }
       return {
@@ -108,5 +110,38 @@ describe('RunProvider live updates', () => {
     })
 
     expect(screen.getAllByText('Spike event detected')).toHaveLength(2)
+  })
+
+  it('appends moe rows from the live WebSocket', async () => {
+    render(
+      <ToastProvider>
+        <RunProvider>
+          <Probe />
+        </RunProvider>
+      </ToastProvider>
+    )
+
+    await waitFor(() => expect(MockWebSocket.instances).toHaveLength(1))
+    await waitFor(() => expect(screen.getByTestId('live-status')).toHaveTextContent('connected'))
+
+    await act(async () => {
+      MockWebSocket.instances[0].onmessage({
+        data: JSON.stringify({
+          type: 'moe',
+          payload: [{ step: 0, block: 'blocks.0.router', shares: [0.25, 0.25, 0.25, 0.25] }],
+        }),
+      })
+    })
+    expect(screen.getByTestId('moe-count')).toHaveTextContent('1')
+
+    await act(async () => {
+      MockWebSocket.instances[0].onmessage({
+        data: JSON.stringify({
+          type: 'moe_delta',
+          payload: [{ step: 1, block: 'blocks.0.router', shares: [0.9, 0.03, 0.03, 0.04] }],
+        }),
+      })
+    })
+    expect(screen.getByTestId('moe-count')).toHaveTextContent('2')
   })
 })

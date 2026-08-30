@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Network } from 'lucide-react'
 import { useRun } from '../RunContext.jsx'
-import { fetchMoe } from '../api.js'
 import Chart from '../components/Chart.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
@@ -23,27 +22,8 @@ const EXPERT_PALETTE = [
 ]
 
 export default function ExpertUtilization() {
-  void useRun()
-  const [rows, setRows] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    let cancelled = false
-    fetchMoe()
-      .then((data) => {
-        if (!cancelled) setRows(Array.isArray(data) ? data : [])
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message || 'Failed to load routing/addressing data.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+  const { moeData, loading, error } = useRun()
+  const rows = moeData ?? []
 
   const blocks = useMemo(() => {
     const names = []
