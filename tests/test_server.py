@@ -1005,6 +1005,35 @@ class TestCluster:
         assert clusters["loss-led"]["runs"] == ["loss_c"]
         assert "no-signal" in clusters or "calm_d" in data["unclustered"]
 
+    def test_cluster_reports_first_signal_crossing_steps(self, tmp_path):
+        """Each cluster carries the first-signal crossing step per member run,
+        so 'when did this failure mode start' is answerable per run."""
+        root = tmp_path / "clx"
+        root.mkdir()
+        # grad_spike makes grad_norm cross at step 40 for every run.
+        self._write_run(root, "grad_a", grad_spike=True)
+        self._write_run(root, "grad_b", grad_spike=True)
+
+        client = TestClient(create_app(str(root / "grad_a"), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+        grad = [c for c in data["clusters"] if c["label"] == "gradient-led"][0]
+
+        assert grad["first_signal"] == "grad_norm"
+        # Both runs cross at step 40 (the start of the 3-step run).
+        assert grad["crossing_steps"] == [40, 40]
+
+    def test_cluster_crossing_steps_empty_for_no_first(self, tmp_path):
+        """A run whose first signal has no crossing step (edge case) must not
+        break the cluster payload."""
+        root = tmp_path / "cln"
+        root.mkdir()
+        self._write_run(root, "grad_a", grad_spike=True)
+
+        client = TestClient(create_app(str(root / "grad_a"), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+        grad = [c for c in data["clusters"] if c["label"] == "gradient-led"][0]
+        assert grad["crossing_steps"] == [40]
+
     def test_counterexample_finds_nearest_stable_run(self, tmp_path):
         """An exploding run gets its nearest stable run (by config distance):
         the loss series of both, the first fired signal's crossing step, and
