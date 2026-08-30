@@ -683,7 +683,9 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         # Flattened config per run, used to answer "why this cluster and not
         # the stable runs" with shared numeric/bool traits (A1).
         flat_by_name: dict[str, dict[str, Any]] = {}
+        dir_by_name: dict[str, Path] = {}
         for run_dir in _discover_run_dirs(rr):
+            dir_by_name[run_dir.name] = run_dir
             meta = await _read_json_optional(run_dir / "meta.json") or {}
             flat_by_name[run_dir.name] = _flatten_config(meta)
             sig = await _run_signal_signature(run_dir)
@@ -730,6 +732,56 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                     break
             return traits
 
+        # Normalized loss band: the cluster's "common fate curve". Each run's
+        # loss is normalized by its own baseline (first-40 mean), so runs on
+        # different loss scales overlay on one step axis; at each step we keep
+        # the median and the IQR band (25th/75th percentile) across members.
+        async def _loss_band(member_names: list[str]) -> dict[str, Any]:
+            steps: list[int] = []
+            medians: list[float] = []
+            lowers: list[float] = []
+            uppers: list[float] = []
+            per_run: list[dict[int, float]] = []
+            for name in member_names:
+                rows = await _read_arrow(dir_by_name[name] / "global.arrow")
+                baseline = sum(
+                    (r.get("loss") or 0.0) for r in rows[:40] if (r.get("loss") or 0.0) > 0
+                )
+                if baseline <= 0:
+                    continue
+                n_baseline = sum(1 for r in rows[:40] if (r.get("loss") or 0.0) > 0)
+                if n_baseline == 0:
+                    continue
+                base_mean = baseline / n_baseline
+                by_step: dict[int, float] = {}
+                for r in rows:
+                    step = r.get("step")
+                    loss = r.get("loss")
+                    if step is not None and loss is not None and math.isfinite(loss):
+                        by_step[int(step)] = float(loss) / base_mean
+                per_run.append(by_step)
+            if not per_run:
+                return {"steps": [], "median": [], "lower": [], "upper": []}
+            all_steps = sorted({s for run in per_run for s in run})
+            # Cluster members share the same curve family; restrict the band to
+            # steps every member recorded so gaps don't mislead the eye.
+            common_steps = sorted(set.intersection(*(set(run) for run in per_run)))
+            if len(common_steps) < 2:
+                common_steps = all_steps
+            for s in common_steps:
+                vals = sorted(run[s] for run in per_run if s in run)
+                if not vals:
+                    continue
+                n = len(vals)
+                median = vals[n // 2] if n % 2 else (vals[n // 2 - 1] + vals[n // 2]) / 2.0
+                lower = vals[n // 4]
+                upper = vals[(3 * n) // 4]
+                steps.append(s)
+                medians.append(round(median, 4))
+                lowers.append(round(lower, 4))
+                uppers.append(round(upper, 4))
+            return {"steps": steps, "median": medians, "lower": lowers, "upper": uppers}
+
         clusters: list[dict[str, Any]] = []
         for (fired, first), group in groups.items():
             labels = {
@@ -764,6 +816,8 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                     ),
                     # Config traits every member shares and no stable run has.
                     "discriminant_traits": _discriminant_traits(group["runs"]),
+                    # Common-fate loss curve: normalized median + IQR band.
+                    "loss_band": await _loss_band(group["runs"]),
                 }
             )
         clusters.sort(key=lambda c: (-int(c["n_runs"]), str(c["label"])))

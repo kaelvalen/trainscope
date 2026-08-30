@@ -180,6 +180,49 @@ export default function Runs() {
                     </Button>
                   ))}
                 </div>
+                {cluster.loss_band?.steps?.length > 0 && (
+                  <div className="mt-3">
+                    <Chart
+                      data={[
+                        {
+                          x: cluster.loss_band.steps,
+                          y: cluster.loss_band.median,
+                          name: 'median',
+                          line: { color: '#38bdf8', width: 2 },
+                          mode: 'lines',
+                        },
+                        {
+                          x: cluster.loss_band.steps,
+                          y: cluster.loss_band.upper,
+                          name: 'IQR',
+                          fill: 'tonexty',
+                          fillcolor: 'rgba(56,189,248,0.15)',
+                          line: { width: 0 },
+                          mode: 'lines',
+                          hoverinfo: 'skip',
+                        },
+                        {
+                          x: cluster.loss_band.steps,
+                          y: cluster.loss_band.lower,
+                          name: 'IQR lower',
+                          fill: 'tonexty',
+                          fillcolor: 'rgba(56,189,248,0.15)',
+                          line: { width: 0 },
+                          mode: 'lines',
+                          hoverinfo: 'skip',
+                        },
+                      ]}
+                      layout={{
+                        height: 120,
+                        margin: { l: 38, r: 8, t: 8, b: 24 },
+                        showlegend: false,
+                        yaxis: { title: { text: 'norm. loss' }, tickfont: { size: 9 } },
+                        xaxis: { title: { text: 'step' }, tickfont: { size: 9 } },
+                      }}
+                      config={{ displayModeBar: false }}
+                    />
+                  </div>
+                )}
               </div>
             ))}
             {clusters.unclustered?.length > 0 && (

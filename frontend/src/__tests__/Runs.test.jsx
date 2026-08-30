@@ -237,6 +237,12 @@ describe('Runs view clusters', () => {
               n_runs: 2,
               typical_lead_steps: 23.5,
               discriminant_traits: [{ field: 'model.lr', value: 5e-4 }],
+              loss_band: {
+                steps: [0, 1, 2],
+                median: [1.0, 1.05, 1.1],
+                lower: [0.98, 1.0, 1.05],
+                upper: [1.02, 1.1, 1.2],
+              },
             },
           ],
           unclustered: [],

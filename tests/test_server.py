@@ -792,6 +792,7 @@ class TestCluster:
         kurtosis_spike=False,
         loss_spike=False,
         lr=None,
+        loss_scale=1.0,
     ):
         path = root / name
         path.mkdir()
@@ -810,7 +811,7 @@ class TestCluster:
         )
         rows = []
         for i in range(80):
-            loss = 1.0
+            loss = 1.0 * loss_scale
             grad = 1.0
             if loss_spike and i == 60:
                 loss = 100.0
@@ -861,6 +862,32 @@ class TestCluster:
         assert "loss-led" in clusters
         assert clusters["loss-led"]["runs"] == ["loss_c"]
         assert "no-signal" in clusters or "calm_d" in data["unclustered"]
+
+    def test_cluster_loss_band(self, tmp_path):
+        """The cluster's loss band is a per-step median + IQR of each member's
+        loss normalized by its own first-40 baseline mean. Two runs on very
+        different absolute loss scales but the same shape must produce a
+        narrow (near-degenerate) band: normalization aligns them."""
+        root = tmp_path / "clb"
+        root.mkdir()
+        # big_b's raw loss is 10x big_a's, but both are constant curves, so
+        # normalized to their own baseline they coincide at every step.
+        self._write_run(root, "big_a", grad_spike=True, loss_scale=1.0)
+        self._write_run(root, "big_b", grad_spike=True, loss_scale=10.0)
+
+        client = TestClient(create_app(str(root / "big_a"), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+        grad = [c for c in data["clusters"] if c["label"] == "gradient-led"][0]
+
+        band = grad["loss_band"]
+        assert len(band["steps"]) >= 2
+        assert len(band["median"]) == len(band["steps"])
+        assert len(band["lower"]) == len(band["steps"])
+        assert len(band["upper"]) == len(band["steps"])
+        # Identical normalized curves -> degenerate band everywhere.
+        assert band["lower"] == band["median"] == band["upper"]
+        # A constant loss normalized by its own baseline mean sits at ~1.0.
+        assert all(abs(v - 1.0) < 1e-6 for v in band["median"])
 
     def test_cluster_requires_multi_run_mode(self, client):
         assert client.get("/api/cluster").status_code == 404
