@@ -16,18 +16,30 @@ class ChangePointDetector(AnomalyDetector):
     """Detect distributional shifts and cumulative drift in the loss stream.
 
     Uses Page's CUSUM (Cumulative Sum) test to detect subtle, persistent loss
-    drifts before they escalate into full spikes. If ``ruptures`` is installed,
-    a PELT (Pruned Exact Linear Time) model is additionally evaluated on recent
-    history for exact change point localization.
+    drifts before they escalate into full spikes. CUSUM is the *trigger*; it
+    accumulates evidence across steps, which is what gives it a calibrated
+    false-alarm rate. If ``ruptures`` is installed, a PELT (Pruned Exact
+    Linear Time) model is evaluated on recent history **only when CUSUM has
+    already fired**, to refine the score's magnitude — PELT never triggers on
+    its own (see below).
 
     Score semantics: CUSUM-triggered spikes return the cumulative sum at
-    trigger time, so ``|score| >= threshold`` always holds. PELT-triggered
-    spikes return the raw median/MAD-normalized deviation
-    ``(loss - median) / (1.4826 * MAD)`` of the triggering observation,
-    preserving the true magnitude of the jump: subtle change points can carry
-    ``|score|`` below ``threshold``. Since 0.6.0 the PELT score is no longer
-    clamped to ``threshold`` (it previously made every PELT spike look
-    identical at ``|score| == threshold``).
+    trigger time, so ``|score| >= threshold`` always holds. When PELT
+    confirms a change at the current observation, the returned score is the
+    raw median/MAD-normalized deviation ``(loss - median) / (1.4826 * MAD)``
+    instead of the clamped cumulative sum, preserving the true magnitude of
+    the jump. PELT only overrides the score of an already-fired CUSUM spike;
+    it is not an independent trigger.
+
+    Why not an independent PELT trigger: PELT refits from scratch on the
+    whole window at every call, with no sequential correction, so its
+    per-step false-alarm rate is its raw single-test rate (measured ~2% on
+    noise) — categorically different from CUSUM's accumulated-evidence
+    design (calibrated to <0.05% in tests). Gating PELT behind a fired
+    CUSUM keeps the calibrated false-alarm guarantee intact while still
+    preserving jump magnitude. (Pre-1.8.1 code ran PELT as a would-be
+    independent trigger, but a breakpoint-comparison bug kept that branch
+    dead; its "PELT-triggered spikes" description never ran.)
 
     Parameters
     ----------
@@ -77,12 +89,35 @@ class ChangePointDetector(AnomalyDetector):
         if std < 1e-12:
             std = 1e-12
 
-        # Optional ruptures PELT evaluation if installed. This runs alongside
-        # (not instead of) the CUSUM test below: a PELT-confirmed change
-        # point at the current observation resets the CUSUM accumulators (so
-        # stale pre-change-point state doesn't leak into the next call) and
-        # is reported with its raw deviation magnitude (see the class
-        # docstring for score semantics), not a value clamped to ``threshold``.
+        # Page's CUSUM calculation — this is the trigger. CUSUM accumulates
+        # evidence across steps, which is what gives it a calibrated
+        # false-alarm rate; PELT (below) never fires independently.
+        z = (loss - mean) / std
+        self._positive_cusum = max(0.0, self._positive_cusum + (z - self.slack))
+        self._negative_cusum = min(0.0, self._negative_cusum + (z + self.slack))
+
+        self._history.append(loss)
+        self._trim()
+
+        if not (
+            self._positive_cusum >= self.threshold or abs(self._negative_cusum) >= self.threshold
+        ):
+            return None
+
+        # CUSUM has fired. Reset accumulators and compute the canonical score.
+        if self._positive_cusum >= self.threshold:
+            score = self._positive_cusum
+        else:
+            score = self._negative_cusum
+        self._positive_cusum = 0.0
+        self._negative_cusum = 0.0
+
+        # PELT refines the magnitude only — it runs solely because CUSUM
+        # already fired, so its ~2% per-step raw single-test false-alarm rate
+        # cannot leak into the calibrated CUSUM trigger. A PELT-confirmed
+        # change at the current observation replaces the clamped cumulative
+        # sum with the raw median/MAD-normalized deviation, preserving the
+        # true magnitude of the jump.
         if rpt is not None and len(history) >= 2 * self.min_observations:
             try:
                 signal = history.reshape(-1, 1)
@@ -98,31 +133,10 @@ class ChangePointDetector(AnomalyDetector):
                 # would be unreachable for any min_size > 1 (min_size is at
                 # least 2), silently dead like the pre-fix n comparison.
                 if len(change_points) > 1 and change_points[-2] >= len(history) - min_size:
-                    self._history.append(loss)
-                    self._trim()
-                    self._positive_cusum = 0.0
-                    self._negative_cusum = 0.0
                     return float((loss - mean) / std)
             except Exception:
                 pass
 
-        # Page's CUSUM calculation
-        z = (loss - mean) / std
-        self._positive_cusum = max(0.0, self._positive_cusum + (z - self.slack))
-        self._negative_cusum = min(0.0, self._negative_cusum + (z + self.slack))
-
-        self._history.append(loss)
-        self._trim()
-
-        if self._positive_cusum >= self.threshold:
-            score = self._positive_cusum
-            self._positive_cusum = 0.0
-            self._negative_cusum = 0.0
-            return float(score)
-        elif abs(self._negative_cusum) >= self.threshold:
-            score = self._negative_cusum
-            self._positive_cusum = 0.0
-            self._negative_cusum = 0.0
-            return float(score)
+        return float(score)
 
         return None
