@@ -680,7 +680,12 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
 
         groups: dict[tuple[tuple[str, ...], str | None], dict[str, Any]] = {}
         unclustered: list[str] = []
+        # Flattened config per run, used to answer "why this cluster and not
+        # the stable runs" with shared numeric/bool traits (A1).
+        flat_by_name: dict[str, dict[str, Any]] = {}
         for run_dir in _discover_run_dirs(rr):
+            meta = await _read_json_optional(run_dir / "meta.json") or {}
+            flat_by_name[run_dir.name] = _flatten_config(meta)
             sig = await _run_signal_signature(run_dir)
             if not sig["fired"]:
                 unclustered.append(run_dir.name)
@@ -695,6 +700,35 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 first_step = sig["first_steps"][sig["first"]]
                 if first_step is not None:
                     group["leads"].append(sig["explosion_step"] - first_step)
+
+        # Discriminant traits: a config field where every run in the cluster
+        # shares a value that no stable (unclustered) run has. Mirrors the
+        # compare endpoint's common-cause rule — numeric/bool only, names and
+        # free-text fields are noise — but scoped to the cluster, so "why did
+        # THIS failure mode blow up and not the stable runs" is answerable
+        # without selecting runs by hand.
+        def _discriminant_traits(member_names: list[str]) -> list[dict[str, Any]]:
+            if not member_names or not unclustered:
+                return []
+            all_fields = sorted({k for n in member_names for k in flat_by_name.get(n, {})})
+            traits: list[dict[str, Any]] = []
+            for k in all_fields:
+                member_values = {flat_by_name[n].get(k) for n in member_names}
+                stable_values = {flat_by_name[n].get(k) for n in unclustered}
+                if not all(
+                    isinstance(v, (int, float, bool)) for v in member_values | stable_values
+                ):
+                    continue
+                # One shared member value, absent from every stable run.
+                if len(member_values) != 1:
+                    continue
+                shared = next(iter(member_values))
+                if shared in stable_values:
+                    continue
+                traits.append({"field": k, "value": shared})
+                if len(traits) >= 5:
+                    break
+            return traits
 
         clusters: list[dict[str, Any]] = []
         for (fired, first), group in groups.items():
@@ -728,6 +762,8 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                     "typical_lead_steps": (
                         round(float(median_lead), 1) if median_lead is not None else None
                     ),
+                    # Config traits every member shares and no stable run has.
+                    "discriminant_traits": _discriminant_traits(group["runs"]),
                 }
             )
         clusters.sort(key=lambda c: (-int(c["n_runs"]), str(c["label"])))

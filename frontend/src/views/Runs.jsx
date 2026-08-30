@@ -150,6 +150,11 @@ export default function Runs() {
                     {cluster.typical_lead_steps != null && (
                       <Badge variant="warning">~{cluster.typical_lead_steps}-step lead</Badge>
                     )}
+                    {cluster.discriminant_traits?.map((trait) => (
+                      <Badge key={trait.field} variant="danger">
+                        distinct: {trait.field}={trait.value}
+                      </Badge>
+                    ))}
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {cluster.fired_signals.map((signal) => (

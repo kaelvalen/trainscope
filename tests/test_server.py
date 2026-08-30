@@ -784,14 +784,22 @@ class TestCluster:
             )
         _write_arrow(layers_dir / "layer0.arrow", LAYER_SCHEMA, rows)
 
-    def _write_run(self, root, name, grad_spike=False, kurtosis_spike=False, loss_spike=False):
+    def _write_run(
+        self,
+        root,
+        name,
+        grad_spike=False,
+        kurtosis_spike=False,
+        loss_spike=False,
+        lr=None,
+    ):
         path = root / name
         path.mkdir()
         path.joinpath("meta.json").write_text(
             json.dumps(
                 {
                     "model_name": "M",
-                    "model_config": {},
+                    "model_config": {"lr": lr} if lr is not None else {},
                     "trainscope_config": {
                         "run_name": name,
                         "full_resolution_window": 500,
@@ -856,6 +864,32 @@ class TestCluster:
 
     def test_cluster_requires_multi_run_mode(self, client):
         assert client.get("/api/cluster").status_code == 404
+
+    def test_cluster_discriminant_traits(self, tmp_path):
+        """A config field shared by every run in a cluster but absent from the
+        stable runs is reported as a discriminant trait: 'why did THIS failure
+        mode blow up and not the others' at a glance."""
+        root = tmp_path / "cld"
+        root.mkdir()
+        # Two gradient-led runs at a high LR, one loss-led at a low LR, one
+        # stable run at a low LR. The gradient cluster shares lr=5e-4, which
+        # no stable run has; the loss-led run's lr matches stable runs, so it
+        # must NOT report that trait.
+        self._write_run(root, "grad_a", grad_spike=True, lr=5e-4)
+        self._write_run(root, "grad_b", grad_spike=True, lr=5e-4)
+        self._write_run(root, "loss_c", loss_spike=True, lr=1e-4)
+        self._write_run(root, "calm_d", lr=1e-4)
+
+        client = TestClient(create_app(str(root / "grad_a"), runs_root=str(root)))
+        data = client.get("/api/cluster").json()
+        clusters = {c["label"]: c for c in data["clusters"]}
+
+        grad = clusters["gradient-led"]
+        assert grad["discriminant_traits"] == [{"field": "model.lr", "value": 5e-4}]
+
+        loss = clusters["loss-led"]
+        # loss_c shares lr=1e-4 with the stable run -> not discriminant.
+        assert loss["discriminant_traits"] == []
 
     def test_cluster_detects_kurtosis_led(self, tmp_path):
         root = tmp_path / "clk"

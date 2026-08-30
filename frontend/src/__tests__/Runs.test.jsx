@@ -236,6 +236,7 @@ describe('Runs view clusters', () => {
               runs: ['run_a', 'run_b'],
               n_runs: 2,
               typical_lead_steps: 23.5,
+              discriminant_traits: [{ field: 'model.lr', value: 5e-4 }],
             },
           ],
           unclustered: [],
@@ -264,5 +265,6 @@ describe('Runs view clusters', () => {
     ).toBeInTheDocument()
     expect(screen.getByText('2 runs')).toBeInTheDocument()
     expect(screen.getByText('~23.5-step lead')).toBeInTheDocument()
+    expect(screen.getByText('distinct: model.lr=0.0005')).toBeInTheDocument()
   })
 })
