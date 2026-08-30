@@ -541,7 +541,14 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 continue
             key = (tuple(sig["fired"]), sig["first"])
             group = groups.setdefault(
-                key, {"runs": [], "fired": sig["fired"], "first": sig["first"], "leads": []}
+                key,
+                {
+                    "runs": [],
+                    "fired": sig["fired"],
+                    "first": sig["first"],
+                    "leads": [],
+                    "crossing_steps": [],
+                },
             )
             group["runs"].append(run_dir.name)
             # Early-warning lead = first crossing -> objective explosion.
@@ -549,6 +556,11 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 first_step = sig["first_steps"][sig["first"]]
                 if first_step is not None:
                     group["leads"].append(sig["explosion_step"] - first_step)
+            # First-signal crossing step per member (A4: cluster summary).
+            if sig["first"] and sig["first_steps"]:
+                crossing = sig["first_steps"].get(sig["first"])
+                if crossing is not None:
+                    group["crossing_steps"].append(crossing)
 
         # Discriminant traits: a config field where every run in the cluster
         # shares a value that no stable (unclustered) run has. Mirrors the
@@ -663,6 +675,9 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                     ),
                     # Config traits every member shares and no stable run has.
                     "discriminant_traits": _discriminant_traits(group["runs"]),
+                    # First-signal crossing step per member run (A4: the
+                    # cluster's "when did this failure mode start" spread).
+                    "crossing_steps": sorted(group["crossing_steps"]),
                     # Common-fate loss curve: normalized median + IQR band.
                     "loss_band": await _loss_band(group["runs"]),
                 }

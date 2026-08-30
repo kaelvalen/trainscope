@@ -248,6 +248,16 @@ export default function Runs() {
                     />
                   </div>
                 )}
+                {cluster.crossing_steps?.length > 0 && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs text-muted">first signal at</span>
+                    {cluster.crossing_steps.map((step, i) => (
+                      <Badge key={`${step}-${i}`} variant="muted">
+                        step {step}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
               </div>
             ))}
             {clusters.unclustered?.length > 0 && (

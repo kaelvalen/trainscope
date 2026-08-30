@@ -241,6 +241,7 @@ describe('Runs view clusters', () => {
               n_runs: 2,
               typical_lead_steps: 23.5,
               discriminant_traits: [{ field: 'model.lr', value: 5e-4 }],
+              crossing_steps: [38, 40],
               loss_band: {
                 steps: [0, 1, 2],
                 median: [1.0, 1.05, 1.1],
@@ -296,6 +297,9 @@ describe('Runs view clusters', () => {
     expect(screen.getByText('2 runs')).toBeInTheDocument()
     expect(screen.getByText('~23.5-step lead')).toBeInTheDocument()
     expect(screen.getByText('distinct: model.lr=0.0005')).toBeInTheDocument()
+    expect(screen.getByText('first signal at')).toBeInTheDocument()
+    expect(screen.getByText('step 38')).toBeInTheDocument()
+    expect(screen.getByText('step 40')).toBeInTheDocument()
   })
 
   it('shows the nearest stable counterexample on demand', async () => {
