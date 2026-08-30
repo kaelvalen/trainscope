@@ -10,8 +10,8 @@ test:
 	PYTHONPATH=$(CURDIR) pytest tests/ -q
 
 lint:
-	ruff check trainscope/ tests/ frontend/src/
-	ruff format --check trainscope/ tests/
+	ruff check trainscope/ tests/ scripts/ examples/ frontend/src/
+	ruff format --check trainscope/ tests/ scripts/ examples/
 	python -m mypy trainscope/ tests/
 
 format:
