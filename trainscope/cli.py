@@ -246,5 +246,46 @@ def report(run: str | None, runs: str | None, fmt: str, output: Path | None) -> 
         click.echo(text)
 
 
+@cli.command()
+@click.option(
+    "--dir",
+    "out_dir",
+    default="./trainscope_demo",
+    show_default=True,
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Where to write the demo runs",
+)
+@click.option("--no-ui", is_flag=True, help="Only generate the runs; do not start the UI")
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", default=7007, show_default=True, type=int)
+def demo(out_dir: Path, no_ui: bool, host: str, port: int) -> None:
+    """Train a few tiny models (stable and diverging) and open the UI on them.
+
+    Takes about ten seconds on a CPU. Two runs train normally; two get a
+    learning-rate ramp that makes them diverge, so the spike story, run
+    clustering and stable counterexample all have real data to show.
+    """
+    from trainscope.demo import generate_demo_runs
+
+    click.echo(f"Training demo runs into {out_dir} ...")
+    for summary in generate_demo_runs(out_dir):
+        status = (
+            f"first spike at step {summary['first_spike']}"
+            if summary["first_spike"] is not None
+            else "stable"
+        )
+        click.echo(f"  {summary['name']:<14} {summary['steps']:>3} steps  {status}")
+
+    if no_ui:
+        click.echo(f"Open them with: trainscope ui --runs {out_dir}")
+        return
+
+    from trainscope.ui.server import start_server
+
+    root = str(out_dir.resolve())
+    click.echo(f"Open http://{host}:{port} in your browser (Ctrl+C to stop)")
+    start_server(root, host=host, port=port, runs_root=root)
+
+
 if __name__ == "__main__":
     cli()
