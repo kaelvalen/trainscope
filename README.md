@@ -248,7 +248,7 @@ TrainScopeConfig(
     stop_on_spike=False,                    # raise StopTraining on detection
     trace_every_n_steps=1,                  # subsample for very large models
     rank=None,                              # DDP rank → _rank{N} suffix
-    device=None,                            # metric compute device; None = CPU
+    device=None,                            # metric compute device; None = where the tensor lives
     track_memory=True,                      # CPU/CUDA memory in global snapshot
     checkpoint_on_spike=None,               # True, path template, or None/False
     rng_every_n_steps=0,                    # save RNG every N steps (0 = only spikes)
@@ -259,7 +259,7 @@ TrainScopeConfig(
 
 ### Notable options
 
-- **`device`** — `None` computes metrics on CPU to avoid GPU synchronization; set to `"cuda"` to force GPU.
+- **`device`** — `None` (default) computes metrics on the device each tensor lives on; set `"cpu"` to offload. Before this release `None` meant CPU, which on a GPU copied every parameter, gradient and activation to the host each step.
 - **`detector`** — Selects the anomaly detector: `detector="changepoint"` (default, CUSUM) or `detector={"name": "z_score", "threshold": 3.5}` for the rolling z-score. Detector thresholds live inside this dict — there is no top-level `spike_threshold` since 1.0, because each detector's threshold is on a different scale (CUSUM's cumulative-sum decision threshold vs. a raw z-score cutoff). Architecture-aware detectors: `expert_utilization_drift` (default threshold 0.85, routing concentration in MoE models) and `addressor_concentration_drift` (default threshold 0.6, slot concentration in memory-augmented models).
 - **`checkpoint_on_spike`** — Save `model.state_dict()` (and optimizer state if available) on spike. `True` writes `checkpoints/{step}.pt`; a string is a `{step}` path template.
 - **`rng_every_n_steps`** — Save RNG state periodically in addition to spike steps.
