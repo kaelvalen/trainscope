@@ -31,13 +31,16 @@ its threshold for ``COLLAPSE_RUN`` consecutive steps; the lead is
 collapse_step - explosion_step. Explosion is defined objectively (loss >
 10x baseline mean, or non-finite), independent of any detector.
 
-Threshold choice: the candidate thresholds below (``MAXP_COLLAPSE`` and
+Threshold choice: the thresholds below (``MAXP_COLLAPSE`` and
 ``ENTROPY_COLLAPSE``) follow the "control max + margin" rule established in
-the previous experiments, but are NOT yet calibrated: the rule requires
-running the stable control first and setting each threshold above the
-measured healthy ceiling. The summary therefore prints each condition's
-observed max for both statistics so the thresholds can be revised against
-real data before this signal is promoted to production.
+the previous experiments. Calibration run (seeds 1, 7, 42; torch 2.11, CPU):
+
+- ``max_p``: stable-control ceiling 0.566, so ``MAXP_COLLAPSE = 0.85`` sits
+  well above healthy behavior. It fired in 3/3 LR-ramp runs, 12-16 steps
+  (mean 13.7) before the explosion, and in 0/3 controls.
+- ``norm_entropy``: never crossed 0.95 in either condition, and its LR-ramp
+  peak (0.745) is indistinguishable from the control's (0.741). Uniformizing
+  heads are not a signal in this scenario; only concentration is.
 
 Caveats established while designing this experiment:
 - A lazy head is NOT necessarily a collapse signal on its own: with four
