@@ -10,10 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Hugging Face `Trainer` callback.** `trainscope.integrations.huggingface.TrainScopeCallback` records each optimizer step in `on_pre_optimizer_step` (after accumulation, AMP unscaling and clipping). The step loss matches the Trainer's own `train_loss` both when the model normalizes micro-batch losses by `num_items_in_batch` (summed) and when it does not (averaged).
 - **PyTorch Lightning callback.** `trainscope.integrations.lightning.TrainScopeCallback` records in `on_before_optimizer_step` (after AMP unscaling, before clipping), with the fp16 loss unscaled.
+- **`trainscope demo`.** Trains four tiny transformers on a synthetic sequence task in about ten seconds on a CPU (two stable, two that diverge organically under a learning-rate ramp) and opens the UI in multi-run mode, so the spike story, run clustering (`distinct: model.lr_ramp=1.15`, ~15-step lead) and stable counterexample have real data without the user's own run. `--no-ui` only writes the runs.
+- **Linkable UI views.** The active view is kept in the URL hash (`#timeline`, `#spikes`, ...), so views can be shared and survive reloads.
+- README screenshots of the Runs and Timeline views.
 - Both callbacks assign per-rank runs under multi-process training and turn `stop_on_spike` into a graceful stop. New extras: `trainscope[huggingface]`, `trainscope[lightning]`.
 
 ### Fixed
+- The Runs view described stable runs (no early-warning signal fired) as runs "without signal data", with a missing space before the list.
 - **Gradient metrics were inflated by the AMP loss scale.** Under `torch.amp.GradScaler`, `step()` read `param.grad` while it still held scaled gradients (unless the caller had already run `scaler.unscale_()`), so global and per-layer grad norms, `grad_max_abs` and `grad_mean` were multiplied by the loss scale (65536× by default). `TrainScope(..., scaler=scaler)` now reports them unscaled whether `step()` runs before or after `unscale_()`.
+
+### Changed
+- Gradient metrics skip the elementwise non-finite count when the gradient norm is finite (a finite norm proves every element is finite). Measured on a 15M-param CPU workload: 1.036× step-time gain [1.024, 1.042] 99% CI.
+- README documents CPU overhead measured on a 15M-param transformer (~40% with the default config; the exact activation median is the largest single cost).
 
 ## [1.8.1] - Calibration & Dead-Code Fixes
 
