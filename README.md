@@ -71,6 +71,13 @@ for step, batch in enumerate(dataloader):
 scope.detach()
 ```
 
+**Mixed precision:** pass your `GradScaler` so gradient metrics are recorded
+unscaled (otherwise they are inflated by the loss scale, e.g. 65536×):
+
+```python
+scope = TrainScope(model, optimizer, config, scaler=scaler).attach()
+```
+
 Open the run in the browser UI:
 
 ```bash
@@ -89,10 +96,9 @@ trainscope ui --run ./trainscope_runs/<run-name>
 ### Per step (global)
 
 - Train loss, global grad norm, learning rate
-  (`grad_norm_after_clip` currently mirrors `grad_norm_before_clip`: TrainScope
-  no longer clips gradients itself — clip externally with
-  `torch.nn.utils.clip_grad_norm_()` before calling `step()` — so there is no
-  separate post-clip reading to record)
+  (TrainScope does not clip gradients itself; `grad_norm_after_clip` mirrors
+  `grad_norm_before_clip` unless you clip externally and pass the real post-clip
+  norm via `step(..., grad_norm_after_clip=...)`)
 - Anomaly score (`spike_score`) from the configured detector — CUSUM
   change-point by default, or Z-score/percentile if configured via
   `detector=`. Only the active detector's score is recorded per step.

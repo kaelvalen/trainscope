@@ -69,9 +69,15 @@ class TrainScope:
         model: nn.Module,
         optimizer: Optimizer,
         config: TrainScopeConfig | None = None,
+        *,
+        scaler: Any = None,
     ):
+        """``scaler``: the ``torch.amp.GradScaler`` used for mixed precision, if
+        any. Gradient metrics are then reported unscaled whether ``step()`` is
+        called before or after ``scaler.unscale_(optimizer)``."""
         self._model = model
         self._optimizer = optimizer
+        self._scaler = scaler
         self._config = config or TrainScopeConfig()
 
         run_name = self._config.run_name
@@ -244,6 +250,18 @@ class TrainScope:
                 total_sq += float(param.grad.detach().float().norm(2).item() ** 2)
         return math.sqrt(total_sq)
 
+    def _grad_inv_scale(self) -> float:
+        """1/scale while the GradScaler still holds scaled grads, else 1."""
+        scaler = self._scaler
+        if scaler is None or not scaler.is_enabled():
+            return 1.0
+        # GradScaler exposes no public "already unscaled?" query; its per-optimizer
+        # stage has been stable since torch 1.6.
+        state = getattr(scaler, "_per_optimizer_states", {}).get(id(self._optimizer), {})
+        if getattr(state.get("stage"), "name", None) == "UNSCALED":
+            return 1.0
+        return 1.0 / float(scaler.get_scale())
+
     def _compute_optimizer_v_norm(self) -> float:
         # Duck-typing on the Adam-family state contract rather than an exact
         # class-name match: fused/8-bit/wrapped optimizers (bitsandbytes,
@@ -323,7 +341,8 @@ class TrainScope:
         # want an honest before/after pair can pass the real post-clip norm
         # via grad_norm_after_clip; it is then recorded instead of mirroring
         # the pre-clip reading.
-        grad_norm_before = self._compute_global_grad_norm()
+        inv_scale = self._grad_inv_scale()
+        grad_norm_before = self._compute_global_grad_norm() * inv_scale
         grad_norm_after = grad_norm_before if grad_norm_after_clip is None else grad_norm_after_clip
 
         optimizer_v_norm = self._compute_optimizer_v_norm()
@@ -395,7 +414,7 @@ class TrainScope:
             layer_name = name
             layer_snap = {
                 "step": step_idx,
-                "grad_l2_norm": grad_metrics.get("grad_l2_norm", 0.0),
+                "grad_l2_norm": grad_metrics.get("grad_l2_norm", 0.0) * inv_scale,
                 "weight_l2_norm": weight_metrics.get("weight_l2_norm", 0.0),
                 "act_mean": act_metrics.get("act_mean"),
                 "act_std": act_metrics.get("act_std"),
@@ -404,8 +423,8 @@ class TrainScope:
                 "grad_nan_inf_ratio": grad_metrics.get("grad_nan_inf_ratio", 0.0),
                 "hist_counts": hist_counts,
                 "hist_edges": hist_edges,
-                "grad_max_abs": grad_metrics.get("grad_max_abs", 0.0),
-                "grad_mean": grad_metrics.get("grad_mean", 0.0),
+                "grad_max_abs": grad_metrics.get("grad_max_abs", 0.0) * inv_scale,
+                "grad_mean": grad_metrics.get("grad_mean", 0.0) * inv_scale,
                 "weight_mean": weight_metrics.get("weight_mean", 0.0),
                 "weight_std": weight_metrics.get("weight_std", 0.0),
                 "weight_max_abs": weight_metrics.get("weight_max_abs", 0.0),
