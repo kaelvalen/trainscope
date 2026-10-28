@@ -3,7 +3,7 @@ import math
 import time
 import warnings
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.distributed as dist
@@ -18,6 +18,8 @@ from trainscope.core.detectors.addressor_concentration import (
 )
 from trainscope.core.detectors.expert_utilization import ExpertUtilizationDriftDetector
 from trainscope.core.metrics import (
+    _activation_metrics_from_stats,
+    _activation_stats,
     _is_sharded,
     _unshard,
     compute_activation_metrics,
@@ -106,7 +108,8 @@ class TrainScope:
         self._detector = make_detector(self._config)
         self._metric_plugins = instantiate_metric_plugins(self._config.metric_plugins)
 
-        self._act_cache: dict[str, dict] = {}
+        # Activation stats stay on device (no sync in the forward pass) until step().
+        self._act_cache: dict[str, dict | torch.Tensor] = {}
         self._hooks: list[Any] = []
         self._moe_cache: dict[str, list[float]] = {}
         self._step_idx = 0
@@ -178,8 +181,11 @@ class TrainScope:
                         return
 
                     if n % self._config.activation_metrics_every_n_steps == 0:
-                        self._act_cache[layer_name] = compute_activation_metrics(
-                            tensor, device=self._metric_device(tensor)
+                        dev = self._metric_device(tensor)
+                        self._act_cache[layer_name] = (
+                            _activation_stats(tensor, dev)
+                            if tensor.numel()
+                            else compute_activation_metrics(tensor, dev)
                         )
 
                 return hook
@@ -279,6 +285,17 @@ class TrainScope:
             dist.all_reduce(sharded_sq, group=group)
             total_sq += float(sharded_sq)
         return math.sqrt(total_sq)
+
+    def _resolve_act_cache(self) -> None:
+        """Read every cached activation stats tensor back in one transfer per device."""
+        keys_by_device: dict[torch.device, list[str]] = {}
+        for key, value in self._act_cache.items():
+            if isinstance(value, torch.Tensor):
+                keys_by_device.setdefault(value.device, []).append(key)
+        for keys in keys_by_device.values():
+            rows = torch.stack([self._act_cache[k] for k in keys]).tolist()  # type: ignore[misc]
+            for key, vals in zip(keys, rows):
+                self._act_cache[key] = _activation_metrics_from_stats(vals)
 
     def _grad_inv_scale(self) -> float:
         """1/scale while the GradScaler still holds scaled grads, else 1."""
@@ -441,6 +458,7 @@ class TrainScope:
         self._run_metric_plugins(step_idx)
 
         layer_snaps: dict[str, dict] = {}
+        self._resolve_act_cache()
         for (name, param), compute_dev, (weight_metrics, grad_metrics) in zip(
             named_params, devices, param_metrics
         ):
@@ -457,7 +475,7 @@ class TrainScope:
             # attach()). On the other steps the cache is empty; write None
             # instead of a zero placeholder so "not measured" stays distinct
             # from "measured and zero" in the UI.
-            act_metrics = self._act_cache.get(module_name) or {}
+            act_metrics = cast(dict, self._act_cache.get(module_name) or {})  # resolved above
 
             layer_name = name
             layer_snap = {
