@@ -298,17 +298,21 @@ Anything not listed here (integration helper details, CLI output formatting) is 
 
 ## Overhead
 
-Measured on CPU with a 2-layer GPT-2 (~430K parameters). GPU overhead is ~3–8× lower.
+Per-step time with the default config (every step traced, histograms every 50
+steps, activation metrics every 5), median over 35 steps:
 
-| Config | CPU overhead | GPU overhead |
-|--------|-------------|-------------|
-| Default (`hist/50`, `act/5`) | ~55% | ~4% |
-| + `activation_layer_filter=["attn","mlp"]` | ~38% | ~2% |
-| Minimal (`hist/50`, `act/50`, filter) | ~18% | ~1% |
+| Setup | Without TrainScope | With TrainScope | Overhead |
+|-------|-------------------|-----------------|----------|
+| GPU: 12-layer transformer, 97M params, bf16 autocast, batch 8×128, RTX 5060 Laptop | 53–54 ms | 83 ms | ~55% |
+| CPU: 8-layer transformer, 15M params, batch 8×64, Ryzen 7 (4 threads) | 132 ms | 185 ms | ~40% |
 
-CPU measured on 2-layer mini-GPT (~430K params), Apple M2. GPU measured on the same model with CUDA. Results scale with parameter count and layer count.
+The GPU row is after this release's fixes; before them the same setup took
+236 ms/step (+340%), because metrics were computed on the CPU. TrainScope's
+cost is per parameter tensor and per traced step, not per token, so it shrinks
+relative to training as batch size and sequence length grow. To cut it, trace
+fewer steps (`trace_every_n_steps`), raise `activation_metrics_every_n_steps`,
+or restrict activations with `activation_layer_filter`.
 
-At a larger scale on CPU: an 8-layer transformer (15M params, 99 parameter tensors, batch 8×64, AdamW) on an AMD Ryzen 7 with 4 threads runs at 132 ms/step without TrainScope and 185 ms/step with the default config (~40%). The largest single cost is the exact activation median (computed every `activation_metrics_every_n_steps`); raise that interval or set `activation_layer_filter` to cut it. GPU overhead at this scale has not been re-measured.
 
 ## Development
 
