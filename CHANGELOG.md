@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Hugging Face `Trainer` callback.** `trainscope.integrations.huggingface.TrainScopeCallback` records each optimizer step in `on_pre_optimizer_step` (after accumulation, AMP unscaling and clipping). The step loss matches the Trainer's own `train_loss` both when the model normalizes micro-batch losses by `num_items_in_batch` (summed) and when it does not (averaged).
+- **PyTorch Lightning callback.** `trainscope.integrations.lightning.TrainScopeCallback` records in `on_before_optimizer_step` (after AMP unscaling, before clipping), with the fp16 loss unscaled.
+- Both callbacks assign per-rank runs under multi-process training and turn `stop_on_spike` into a graceful stop. New extras: `trainscope[huggingface]`, `trainscope[lightning]`.
+
 ### Fixed
 - **Gradient metrics were inflated by the AMP loss scale.** Under `torch.amp.GradScaler`, `step()` read `param.grad` while it still held scaled gradients (unless the caller had already run `scaler.unscale_()`), so global and per-layer grad norms, `grad_max_abs` and `grad_mean` were multiplied by the loss scale (65536× by default). `TrainScope(..., scaler=scaler)` now reports them unscaled whether `step()` runs before or after `unscale_()`.
 
