@@ -11,7 +11,10 @@ When a loss spike hits, you know *that* it happened — trainscope tells you *wh
 
 ```bash
 pip install trainscope
+trainscope demo   # trains 4 tiny runs (~10 s on CPU), 2 of which diverge, and opens the UI
 ```
+
+![Runs view: diverging runs clustered by their first early-warning signal, with the shared config trait and lead time](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/runs-view.png)
 
 ## Table of contents
 
@@ -107,12 +110,11 @@ Open the run in the browser UI:
 trainscope ui --run ./trainscope_runs/<run-name>
 ```
 
-For a self-contained example with an injected drift and spike:
-
-```bash
-python examples/gpt2_spike_demo.py
-trainscope ui --run ./trainscope_runs/<run-name>
-```
+To see the UI on real data without your own run, `trainscope demo` trains two
+stable runs and two runs that diverge under a learning-rate ramp, then opens
+the Runs view (`--no-ui` only writes them; `--dir` picks the location).
+`examples/gpt2_spike_demo.py` is a minimal end-to-end script with an injected
+spike.
 
 ## What gets recorded
 
@@ -159,6 +161,10 @@ Seven views, one command:
 | **Spike Inspector** | **Spike Story Flow**: Chronological root cause cascade diagnosis & layer breakdown |
 | **Replay** | The run's generated `replay_config.json` with the training steps its skip list maps to |
 
+Each view has its own URL (`http://127.0.0.1:7007/#spikes`), so a link to a view can be shared and survives a reload.
+
+![Timeline view with the detector warmup band and the detected anomaly window](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/timeline-view.png)
+
 The React UI is served by default after `pip install trainscope` (pre-compiled assets included). If developing from source:
 
 ```bash
@@ -168,6 +174,9 @@ cd frontend && npm install && npm run build
 ## Command-line interface
 
 ```bash
+# Train demo runs (2 stable, 2 diverging) and open the UI on them
+trainscope demo [--dir ./trainscope_demo] [--no-ui] [--host 127.0.0.1] [--port 7007]
+
 # Open UI for a completed or in-progress run
 trainscope ui --run ./trainscope_runs/run_20250516_143022 \
     [--host 127.0.0.1] [--port 7007] [--log-level INFO]
