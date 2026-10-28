@@ -28,7 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - **`device=None` now computes metrics where each tensor lives**, as `TrainScopeConfig`'s own field comment documented; it previously meant CPU (the README said so), which on a GPU copied every parameter, gradient and activation to the host and reduced them there each traced step. Recorded values are unchanged (a GPU test checks GPU and CPU paths agree). On an RTX 5060 Laptop with a 97M-param transformer (bf16 autocast, batch 8×128): `VERDICT IMPROVED gain 2.38x [2.35, 2.41]`, 218 → 91.5 ms/step (training alone: ~53 ms/step). Set `device="cpu"` for the old behavior.
 - Gradient metrics skip the elementwise non-finite count when the gradient norm is finite (a finite norm proves every element is finite). Measured on a 15M-param CPU training workload, end to end: 1.036× gain [1.024, 1.042] 99% CI.
-- README documents CPU overhead measured on a 15M-param transformer (~40% with the default config; the exact activation median is the largest single cost).
+- Weight/gradient metrics and the global grad/optimizer-v norms are read with one host transfer per parameter (per device for the global norms) instead of one `.item()` sync per statistic. GPU: `IMPROVED 1.058x [1.049, 1.076]` and `IMPROVED 1.051x [1.035, 1.063]`; CPU: no effect either way, outputs identical.
+- **GPU overhead, cumulative for this release:** `VERDICT IMPROVED gain 2.86x [2.80, 2.89]` on the 97M-param RTX 5060 workload, 235.7 → 82.6 ms/step (training alone ~53 ms/step: overhead from ~+340% to ~+55%). The README's previous "~4% GPU overhead" figure did not hold at this scale and is replaced with measured numbers for GPU and CPU.
 
 ## [1.8.1] - Calibration & Dead-Code Fixes
 
