@@ -230,5 +230,8 @@ def compute_weight_histogram(
         edges_list = [float(w_min + i * step - step * n_bins / 2) for i in range(n_bins + 1)]
         return [float(v) for v in counts_t.tolist()], edges_list
 
-    counts_t, edges_t = torch.histogram(finite, bins=n_bins)
+    # histc, not histogram: same equal-width bins over [min, max], but it also
+    # has a CUDA kernel, so config.device="cuda" works.
+    counts_t = torch.histc(finite, bins=n_bins, min=w_min, max=w_max)
+    edges_t = torch.linspace(w_min, w_max, n_bins + 1)
     return [float(v) for v in counts_t.tolist()], [float(v) for v in edges_t.tolist()]
