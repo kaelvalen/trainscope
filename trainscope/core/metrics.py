@@ -241,52 +241,55 @@ def compute_param_metrics(
 def _fused_param_metrics(
     weights: list[torch.Tensor], grads: list[torch.Tensor | None], dev: str | torch.device
 ) -> list[tuple[dict, dict]]:
-    """Fused reductions over same-device, non-empty, non-DTensor tensors, read
-    back with a single ``.tolist()``."""
-    ws = [_to_compute_device(w, dev) for w in weights]
-    g_idx = [j for j, g in enumerate(grads) if g is not None]
-    gs = [_to_compute_device(grads[j], dev) for j in g_idx]  # type: ignore[arg-type]
-    scalars = [*torch._foreach_norm(ws), *torch._foreach_norm(ws, math.inf)]
-    for w in ws:
-        std, mean = torch.std_mean(w, correction=0)
-        scalars += [mean, std, w.amin()]
-    if gs:
-        scalars += [*torch._foreach_norm(gs), *torch._foreach_norm(gs, math.inf)]
-        scalars += [g.mean() for g in gs]
+    """Two passes per tensor (std_mean, aminmax), read back with one ``.tolist()``.
+
+    L2 and max-abs follow from them: l2^2 = n * (std^2 + mean^2), max_abs =
+    max(-min, max). A non-finite statistic (overflow/NaN) falls back to the
+    exact per-tensor functions so inf norms and nan/inf ratios stay as before.
+    """
+    tensors = [_to_compute_device(t, dev) for t in [*weights, *(g for g in grads if g is not None)]]
+    scalars = []
+    for t in tensors:
+        scalars += [*torch.std_mean(t, correction=0), *torch.aminmax(t)]
     vals = torch.stack(scalars).tolist()
 
-    n, k = len(ws), len(gs)
-    w_l2, w_max, w_rest = vals[:n], vals[n : 2 * n], vals[2 * n : 5 * n]
-    g_l2, g_max, g_mean = (
-        vals[5 * n : 5 * n + k],
-        vals[5 * n + k : 5 * n + 2 * k],
-        vals[5 * n + 2 * k :],
-    )
-    grad_metrics = {}
-    for m, j in enumerate(g_idx):
-        # A finite norm proves every element is finite (NaN/Inf propagate).
-        ratio = 0.0
-        if not math.isfinite(g_l2[m]):
-            ratio = float((~torch.isfinite(gs[m])).sum().item()) / gs[m].numel()
-        grad_metrics[j] = {
-            "grad_l2_norm": g_l2[m],
-            "grad_nan_inf_ratio": ratio,
-            "grad_max_abs": g_max[m],
-            "grad_mean": g_mean[m],
-        }
-    return [
-        (
-            {
-                "weight_l2_norm": w_l2[j],
-                "weight_mean": w_rest[3 * j],
-                "weight_std": w_rest[3 * j + 1],
-                "weight_max_abs": w_max[j],
-                "weight_min": w_rest[3 * j + 2],
-            },
-            grad_metrics.get(j) or compute_gradient_metrics(None),
+    def stats(j: int) -> tuple[float, float, float, float, float] | None:
+        std, mean, lo, hi = vals[4 * j : 4 * j + 4]
+        if not all(math.isfinite(v) for v in (std, mean, lo, hi)):
+            return None
+        return math.sqrt(tensors[j].numel() * (std * std + mean * mean)), mean, std, lo, hi
+
+    out = []
+    g_pos = len(weights)
+    for j, (w, g) in enumerate(zip(weights, grads)):
+        ws = stats(j)
+        weight_metrics = (
+            compute_weight_metrics(w, dev)
+            if ws is None
+            else {
+                "weight_l2_norm": ws[0],
+                "weight_mean": ws[1],
+                "weight_std": ws[2],
+                "weight_max_abs": max(-ws[3], ws[4]),
+                "weight_min": ws[3],
+            }
         )
-        for j in range(n)
-    ]
+        gs = None
+        if g is not None:
+            gs = stats(g_pos)
+            g_pos += 1
+        grad_metrics = (
+            compute_gradient_metrics(g, dev)
+            if gs is None
+            else {
+                "grad_l2_norm": gs[0],
+                "grad_nan_inf_ratio": 0.0,
+                "grad_max_abs": max(-gs[3], gs[4]),
+                "grad_mean": gs[1],
+            }
+        )
+        out.append((weight_metrics, grad_metrics))
+    return out
 
 
 def compute_weight_histogram(
