@@ -143,7 +143,7 @@ spike.
 
 - Gradient L2 norm, max absolute gradient, gradient mean
 - Weight L2 norm, mean, std, min, max absolute value
-- Activation mean / std / min / max / median / max-abs / kurtosis
+- Activation mean / std / min / max / median / max-abs / kurtosis (median estimated from 131,072 elements on larger activations)
 - NaN/Inf ratio in gradients
 - 16-bin weight histogram
 

@@ -102,6 +102,12 @@ def _sharded_histogram(weight: DTensor, n_bins: int) -> tuple[list[float], list[
     return [float(v) for v in counts_t.tolist()], [float(v) for v in edges.tolist()]
 
 
+_MEDIAN_SAMPLE = 1 << 17
+# Prime: i * stride mod n hits every residue of any period dividing n, so the
+# sample spreads over all channels and positions instead of aliasing onto one.
+_MEDIAN_STRIDE = 1_000_000_007
+
+
 def _activation_stats(act: torch.Tensor, device: str | torch.device) -> torch.Tensor:
     """``[mean, std, min, max, kurtosis, median]`` of a non-empty activation, left
     on ``device`` so callers can read many of them back in one transfer."""
@@ -109,7 +115,14 @@ def _activation_stats(act: torch.Tensor, device: str | torch.device) -> torch.Te
     std, mean = torch.std_mean(act_f, correction=0)
     lo, hi = torch.aminmax(act_f)
     kurtosis = (((act_f - mean) / std) ** 4).mean() - 3.0
-    return torch.stack([mean, std, lo, hi, kurtosis, act_f.median()])
+    median_src, n = act_f, act_f.numel()
+    if n > _MEDIAN_SAMPLE and n % _MEDIAN_STRIDE:
+        # shortcut: median of 2^17 distinct elements (std err ~0.004 std); the
+        # exact select was ~90% of an activation step on GPU. Use the full
+        # tensor if a consumer ever needs the exact order statistic.
+        idx = torch.arange(_MEDIAN_SAMPLE, device=act_f.device) * _MEDIAN_STRIDE % n
+        median_src = act_f[idx]
+    return torch.stack([mean, std, lo, hi, kurtosis, median_src.median()])
 
 
 def _activation_metrics_from_stats(vals: list[float]) -> dict:

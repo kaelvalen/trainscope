@@ -222,3 +222,14 @@ def test_param_metrics_match_per_tensor_functions(device):
         assert gm.keys() == ref.keys()
         for k in ref:
             assert gm[k] == pytest.approx(ref[k], rel=1e-5, abs=1e-6, nan_ok=True)
+
+
+def test_activation_median_is_exact_when_small_and_close_when_sampled():
+    small = torch.randn(1000)
+    assert compute_activation_metrics(small)["act_median"] == small.median().item()
+    # Channel-structured activation: a naive stride would sample one channel.
+    big = (torch.randn(8, 128, 768) + torch.linspace(-3, 3, 768)).flatten()
+    exact = big.median().item()
+    assert compute_activation_metrics(big)["act_median"] == pytest.approx(
+        exact, abs=0.02 * big.std().item()
+    )
