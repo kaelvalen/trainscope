@@ -436,3 +436,36 @@ def test_report_materializes_remote_runs_root(runner):
     assert result.exit_code == 0, result.output
     assert "# Run behavior clusters (1 runs)" in result.output
     assert "## Stable (no signal) runs" in result.output
+
+
+def test_demo_generates_stable_and_diverging_runs(runner, tmp_path: Path):
+    import asyncio
+
+    from trainscope.analysis import run_signal_signature
+
+    out = tmp_path / "demo"
+    result = runner.invoke(cli, ["demo", "--dir", str(out), "--no-ui"])
+    assert result.exit_code == 0, result.output
+    assert "trainscope ui --runs" in result.output
+
+    sigs = {p.name: asyncio.run(run_signal_signature(p)) for p in sorted(out.iterdir())}
+    assert set(sigs) == {"stable-seed0", "stable-seed1", "lr-ramp-seed0", "lr-ramp-seed1"}
+    for name, sig in sigs.items():
+        if name.startswith("stable"):
+            assert sig["fired"] == [] and sig["explosion_step"] is None
+        else:
+            # An early-warning signal must fire before the objective explosion.
+            assert sig["explosion_step"] is not None
+            assert min(sig["first_steps"].values()) < sig["explosion_step"]
+
+
+def test_demo_starts_ui_on_runs_root(runner, tmp_path: Path):
+    out = tmp_path / "demo"
+    with (
+        patch("trainscope.demo.generate_demo_runs", return_value=[]),
+        patch("trainscope.ui.server.start_server") as start,
+    ):
+        result = runner.invoke(cli, ["demo", "--dir", str(out), "--port", "9001"])
+    assert result.exit_code == 0, result.output
+    root = str(out.resolve())
+    start.assert_called_once_with(root, host="127.0.0.1", port=9001, runs_root=root)
