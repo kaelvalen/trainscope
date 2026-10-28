@@ -124,3 +124,33 @@ def test_lightning_16_mixed_on_gpu(tmp_path):
     assert [r["loss"] for r in rows] == pytest.approx(expected, rel=1e-3)
     finite = [r["grad_norm_before_clip"] for r in rows if math.isfinite(r["grad_norm_before_clip"])]
     assert finite and all(0 < v < 100 for v in finite)
+
+
+def test_metrics_computed_on_gpu_match_cpu(tmp_path):
+    """config.device="cuda" (metrics on the GPU, no host copies) must record
+    the same values as the CPU default, histograms included."""
+    rows = {}
+    for device in (None, "cuda"):
+        torch.manual_seed(0)
+        model = nn.Sequential(nn.Linear(32, 64), nn.GELU(), nn.Linear(64, 1)).cuda()
+        opt = torch.optim.SGD(model.parameters(), lr=1e-2)
+        name = f"dev_{device}"
+        cfg = TrainScopeConfig(
+            run_dir=str(tmp_path), run_name=name, track_memory=False, device=device
+        )
+        scope = TrainScope(model, opt, cfg).attach()
+        for step in range(3):
+            gen = torch.Generator(device="cuda").manual_seed(step)
+            x = torch.randn(16, 32, device="cuda", generator=gen)
+            opt.zero_grad()
+            loss = model(x).pow(2).mean()
+            loss.backward()
+            scope.step(loss.item())
+            opt.step()
+        scope.detach()
+        rows[device] = read_arrow_rows_sync(tmp_path / name / "layers" / "0.weight.arrow")
+    for cpu_row, gpu_row in zip(rows[None], rows["cuda"]):
+        for key in ("grad_l2_norm", "weight_l2_norm", "weight_std", "act_kurtosis"):
+            if cpu_row[key] is not None:
+                assert gpu_row[key] == pytest.approx(cpu_row[key], rel=1e-4, abs=1e-6), key
+        assert sum(gpu_row["hist_counts"]) == sum(cpu_row["hist_counts"])
