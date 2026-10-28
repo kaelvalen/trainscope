@@ -387,9 +387,11 @@ class TestMoEIntegration:
         # approaches 1.0. Override the router weights directly.
         for block in model.blocks:
             with torch.no_grad():
+                # Bias, not weight: weight[0, :] = 10 routes by sign(sum(x)),
+                # which made the test depend on the global RNG state.
                 block.router.weight.zero_()
-                block.router.weight[0, :] = 10.0
                 block.router.bias.zero_()
+                block.router.bias[0] = 10.0
 
         x = torch.randn(4, 8)
         y = torch.randn(4, 1)
