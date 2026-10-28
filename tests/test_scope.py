@@ -529,3 +529,34 @@ class TestAddressorIntegration:
         assert spike_steps, "addressor detector never fired on concentrated addressing"
         _, first_score = spike_steps[0]
         assert first_score >= 0.6
+
+
+@pytest.mark.parametrize("unscale_first", [False, True])
+def test_grad_metrics_are_unscaled_under_grad_scaler(tmp_path, unscale_first):
+    """With a GradScaler, recorded grad norms must be the true (unscaled)
+    norms whether step() runs before or after scaler.unscale_()."""
+    torch.manual_seed(0)
+    model = nn.Linear(4, 1)
+    opt = torch.optim.SGD(model.parameters(), lr=0.01)
+    scaler = torch.amp.GradScaler("cpu", init_scale=1024.0)
+    name = f"scope_amp_{unscale_first}"
+    cfg = TrainScopeConfig(run_dir=str(tmp_path), run_name=name)
+    scope = TrainScope(model, opt, cfg, scaler=scaler).attach()
+
+    x, y = torch.randn(8, 4), torch.randn(8, 1)
+    loss = nn.functional.mse_loss(model(x), y)
+    scaler.scale(loss).backward()
+    true_norm = _grad_l2_norm(model) / 1024.0
+    assert model.weight.grad is not None
+    true_w_norm = float(model.weight.grad.norm()) / 1024.0
+    if unscale_first:
+        scaler.unscale_(opt)
+    scope.step(loss.item())
+    scaler.step(opt)
+    scaler.update()
+    scope.detach()
+
+    rows = read_arrow_rows_sync(tmp_path / name / "global.arrow")
+    assert rows[0]["grad_norm_before_clip"] == pytest.approx(true_norm, rel=1e-5)
+    layer = read_arrow_rows_sync(tmp_path / name / "layers" / "weight.arrow")
+    assert layer[0]["grad_l2_norm"] == pytest.approx(true_w_norm, rel=1e-5)

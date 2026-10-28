@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Gradient metrics were inflated by the AMP loss scale.** Under `torch.amp.GradScaler`, `step()` read `param.grad` while it still held scaled gradients (unless the caller had already run `scaler.unscale_()`), so global and per-layer grad norms, `grad_max_abs` and `grad_mean` were multiplied by the loss scale (65536× by default). `TrainScope(..., scaler=scaler)` now reports them unscaled whether `step()` runs before or after `unscale_()`.
+
 ## [1.8.1] - Calibration & Dead-Code Fixes
 
 ### Fixed
