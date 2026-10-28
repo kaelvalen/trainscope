@@ -4,8 +4,10 @@ import pytest
 import torch
 
 from trainscope.core.metrics import (
+    _fused_param_metrics,
     compute_activation_metrics,
     compute_gradient_metrics,
+    compute_param_metrics,
     compute_weight_histogram,
     compute_weight_metrics,
 )
@@ -180,3 +182,43 @@ class TestDeviceOffloading:
         t = torch.randn(4, 4)
         m = compute_weight_metrics(t, device="cpu")
         assert m["weight_mean"] == pytest.approx(t.mean().item())
+
+
+@pytest.mark.parametrize(
+    "device",
+    [
+        "cpu",
+        pytest.param(
+            "cuda", marks=pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA")
+        ),
+    ],
+)
+def test_param_metrics_match_per_tensor_functions(device):
+    torch.manual_seed(0)
+    nan_grad = torch.randn(7, 3)
+    nan_grad[0, 0] = float("nan")
+    weights = [
+        torch.randn(32, 16),
+        torch.ones(8),  # constant: std 0
+        torch.randn(5).bfloat16(),
+        torch.empty(0),
+        torch.randn(7, 3),
+    ]
+    grads = [torch.randn(32, 16), None, torch.randn(5).bfloat16(), torch.empty(0), nan_grad]
+    weights, grads = (
+        [w.to(device) for w in weights],
+        [g if g is None else g.to(device) for g in grads],
+    )
+
+    batched = compute_param_metrics(weights, grads, [device] * len(weights))
+    # CPU dispatches to the per-tensor path, so exercise the fused one directly.
+    fused = _fused_param_metrics(
+        [weights[i] for i in (0, 1, 2, 4)], [grads[i] for i in (0, 1, 2, 4)], device
+    )
+    batched[:3], batched[4] = fused[:3], fused[3]
+    for w, g, (wm, gm) in zip(weights, grads, batched):
+        assert wm == pytest.approx(compute_weight_metrics(w, device), rel=1e-5, abs=1e-6)
+        ref = compute_gradient_metrics(g, device)
+        assert gm.keys() == ref.keys()
+        for k in ref:
+            assert gm[k] == pytest.approx(ref[k], rel=1e-5, abs=1e-6, nan_ok=True)

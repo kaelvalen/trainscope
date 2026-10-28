@@ -21,9 +21,8 @@ from trainscope.core.metrics import (
     _is_sharded,
     _unshard,
     compute_activation_metrics,
-    compute_gradient_metrics,
+    compute_param_metrics,
     compute_weight_histogram,
-    compute_weight_metrics,
 )
 from trainscope.integrations import build_alerters, build_callbacks
 from trainscope.io import RemoteWriter
@@ -438,10 +437,15 @@ class TrainScope:
         self._run_metric_plugins(step_idx)
 
         layer_snaps: dict[str, dict] = {}
-        for name, param in self._model.named_parameters():
+        named_params = list(self._model.named_parameters())
+        devices = [self._metric_device(p.data) for _, p in named_params]
+        param_metrics = compute_param_metrics(
+            [p.data for _, p in named_params], [p.grad for _, p in named_params], devices
+        )
+        for (name, param), compute_dev, (weight_metrics, grad_metrics) in zip(
+            named_params, devices, param_metrics
+        ):
             module_name = name.rsplit(".", 1)[0] if "." in name else name
-            compute_dev = self._metric_device(param.data)
-            weight_metrics = compute_weight_metrics(param.data, device=compute_dev)
             if should_histogram:
                 hist_counts, hist_edges = compute_weight_histogram(
                     param.data, n_bins=self._config.n_histogram_bins, device=compute_dev
@@ -455,7 +459,6 @@ class TrainScope:
             # instead of a zero placeholder so "not measured" stays distinct
             # from "measured and zero" in the UI.
             act_metrics = self._act_cache.get(module_name) or {}
-            grad_metrics = compute_gradient_metrics(param.grad, device=compute_dev)
 
             layer_name = name
             layer_snap = {

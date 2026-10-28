@@ -205,6 +205,90 @@ def compute_weight_metrics(weight: torch.Tensor, device: str | torch.device = "c
     }
 
 
+def compute_param_metrics(
+    weights: list[torch.Tensor],
+    grads: list[torch.Tensor | None],
+    devices: list[str | torch.device],
+) -> list[tuple[dict, dict]]:
+    """``(compute_weight_metrics, compute_gradient_metrics)`` for many tensors.
+
+    On accelerators, tensors sharing a compute device go through
+    ``_fused_param_metrics`` (one host transfer instead of a device sync per
+    tensor). CPU has no sync to save and its foreach ops are plain loops, so
+    CPU, DTensors and empty tensors take the per-tensor path.
+    """
+    out: list[tuple[dict, dict] | None] = [None] * len(weights)
+    groups: dict[str, list[int]] = {}
+    for i, (w, g, dev) in enumerate(zip(weights, grads, devices)):
+        if (
+            torch.device(dev).type == "cpu"
+            or _is_dtensor(w)
+            or w.numel() == 0
+            or (g is not None and (_is_dtensor(g) or g.numel() == 0))
+        ):
+            out[i] = (compute_weight_metrics(w, dev), compute_gradient_metrics(g, dev))
+        else:
+            groups.setdefault(str(dev), []).append(i)
+    for idx in groups.values():
+        fused = _fused_param_metrics(
+            [weights[i] for i in idx], [grads[i] for i in idx], devices[idx[0]]
+        )
+        for i, metrics in zip(idx, fused):
+            out[i] = metrics
+    return out  # type: ignore[return-value]
+
+
+def _fused_param_metrics(
+    weights: list[torch.Tensor], grads: list[torch.Tensor | None], dev: str | torch.device
+) -> list[tuple[dict, dict]]:
+    """Fused reductions over same-device, non-empty, non-DTensor tensors, read
+    back with a single ``.tolist()``."""
+    ws = [_to_compute_device(w, dev) for w in weights]
+    g_idx = [j for j, g in enumerate(grads) if g is not None]
+    gs = [_to_compute_device(grads[j], dev) for j in g_idx]  # type: ignore[arg-type]
+    scalars = [*torch._foreach_norm(ws), *torch._foreach_norm(ws, math.inf)]
+    for w in ws:
+        std, mean = torch.std_mean(w, correction=0)
+        scalars += [mean, std, w.amin()]
+    if gs:
+        scalars += [*torch._foreach_norm(gs), *torch._foreach_norm(gs, math.inf)]
+        scalars += [g.mean() for g in gs]
+    vals = torch.stack(scalars).tolist()
+
+    n, k = len(ws), len(gs)
+    w_l2, w_max, w_rest = vals[:n], vals[n : 2 * n], vals[2 * n : 5 * n]
+    g_l2, g_max, g_mean = (
+        vals[5 * n : 5 * n + k],
+        vals[5 * n + k : 5 * n + 2 * k],
+        vals[5 * n + 2 * k :],
+    )
+    grad_metrics = {}
+    for m, j in enumerate(g_idx):
+        # A finite norm proves every element is finite (NaN/Inf propagate).
+        ratio = 0.0
+        if not math.isfinite(g_l2[m]):
+            ratio = float((~torch.isfinite(gs[m])).sum().item()) / gs[m].numel()
+        grad_metrics[j] = {
+            "grad_l2_norm": g_l2[m],
+            "grad_nan_inf_ratio": ratio,
+            "grad_max_abs": g_max[m],
+            "grad_mean": g_mean[m],
+        }
+    return [
+        (
+            {
+                "weight_l2_norm": w_l2[j],
+                "weight_mean": w_rest[3 * j],
+                "weight_std": w_rest[3 * j + 1],
+                "weight_max_abs": w_max[j],
+                "weight_min": w_rest[3 * j + 2],
+            },
+            grad_metrics.get(j) or compute_gradient_metrics(None),
+        )
+        for j in range(n)
+    ]
+
+
 def compute_weight_histogram(
     weight: torch.Tensor, n_bins: int = 16, device: str | torch.device = "cpu"
 ) -> tuple[list[float], list[float]]:
