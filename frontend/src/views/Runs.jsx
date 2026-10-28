@@ -148,9 +148,9 @@ export default function Runs() {
               Run behavior clusters
             </CardTitle>
             <p className="chart-card__description">
-              Runs grouped by which early-warning signal fired first. The typical lead is the
-              median time between that signal&apos;s first crossing and the loss explosion, across
-              the cluster&apos;s runs.
+              Runs grouped by which early-warning signal fired first. The typical lead is the median
+              time between that signal&apos;s first crossing and the loss explosion, across the
+              cluster&apos;s runs.
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -282,8 +282,7 @@ export default function Runs() {
               Why {counterexample.query_run} vs. {counterexample.counterexample_run}
             </CardTitle>
             <p className="chart-card__description">
-              The nearest stable run by config distance (
-              {counterexample.config_distance}).{' '}
+              The nearest stable run by config distance ({counterexample.config_distance}).{' '}
               {counterexample.first_signal
                 ? `First signal: ${counterexample.first_signal} at step ${counterexample.crossing_step}.`
                 : 'No early-warning signal fired in the query run.'}
@@ -307,9 +306,9 @@ export default function Runs() {
                   x: (counterexample.loss_series?.[counterexample.counterexample_run] ?? []).map(
                     (p) => p.step
                   ),
-                  y: (
-                    counterexample.loss_series?.[counterexample.counterexample_run] ?? []
-                  ).map((p) => p.loss),
+                  y: (counterexample.loss_series?.[counterexample.counterexample_run] ?? []).map(
+                    (p) => p.loss
+                  ),
                   name: counterexample.counterexample_run,
                   line: { color: '#4ade80', width: 2 },
                   mode: 'lines',

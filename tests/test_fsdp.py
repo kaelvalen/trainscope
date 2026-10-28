@@ -25,6 +25,8 @@ def _grad_norm(p: torch.Tensor) -> float:
 
 
 def _worker(rank: int, init_file: str, run_dir: str) -> None:
+    from torch.distributed.device_mesh import init_device_mesh
+
     from trainscope import TrainScope, TrainScopeConfig
     from trainscope.io.writer import read_arrow_rows_sync
 
@@ -39,9 +41,11 @@ def _worker(rank: int, init_file: str, run_dir: str) -> None:
     # The last bias has 1 element, so rank 1's shard of it is empty.
     model = nn.Sequential(nn.Linear(6, 5), nn.Tanh(), nn.Linear(5, 1))
     reference = copy.deepcopy(model)
+    # Explicit CPU mesh: with CUDA present, fully_shard would default to the GPU.
+    mesh = init_device_mesh("cpu", (WORLD,))
     for layer in (model[0], model[2]):
-        fsdp.fully_shard(layer)
-    fsdp.fully_shard(model)
+        fsdp.fully_shard(layer, mesh=mesh)
+    fsdp.fully_shard(model, mesh=mesh)
     opt = torch.optim.AdamW(model.parameters(), lr=1e-2)
     ref_opt = torch.optim.AdamW(reference.parameters(), lr=1e-2)
 
