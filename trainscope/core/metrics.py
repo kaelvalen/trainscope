@@ -1,3 +1,5 @@
+import math
+
 import torch
 
 
@@ -54,8 +56,12 @@ def compute_gradient_metrics(grad: torch.Tensor | None, device: str | torch.devi
 
     grad_f = _to_compute_device(grad, device)
     l2_norm = float(grad_f.norm(2).item())
-    nan_inf_count = float((~torch.isfinite(grad_f)).sum().item())
-    nan_inf_ratio = nan_inf_count / grad_f.numel()
+    # A finite norm proves every element is finite (NaN/Inf propagate), so the
+    # elementwise count is only needed when the norm is not.
+    if math.isfinite(l2_norm):
+        nan_inf_ratio = 0.0
+    else:
+        nan_inf_ratio = float((~torch.isfinite(grad_f)).sum().item()) / grad_f.numel()
 
     return {
         "grad_l2_norm": l2_norm,
