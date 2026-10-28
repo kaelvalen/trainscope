@@ -19,8 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Runs view described stable runs (no early-warning signal fired) as runs "without signal data", with a missing space before the list.
 - **Gradient metrics were inflated by the AMP loss scale.** Under `torch.amp.GradScaler`, `step()` read `param.grad` while it still held scaled gradients (unless the caller had already run `scaler.unscale_()`), so global and per-layer grad norms, `grad_max_abs` and `grad_mean` were multiplied by the loss scale (65536× by default). `TrainScope(..., scaler=scaler)` now reports them unscaled whether `step()` runs before or after `unscale_()`.
 
+### Verified
+- **Activation-kurtosis lead re-measured under the calibrated 3σ threshold:** 15–17 steps (mean 16.0) before loss divergence in 3/3 seeds, vs. 14–18 (mean 16.7) under the old raw-MAD threshold. The README's "pending re-measurement" caveat is removed. CUSUM re-run unchanged at 9–11 steps.
+- **Attention-collapse thresholds calibrated.** Max attention weight: stable-control ceiling 0.566 (threshold 0.85); fired in 3/3 LR-ramp runs 12–16 steps early, 0/3 controls. Normalized entropy: not a signal (ramp peak 0.745 vs. control 0.741). Not promoted to a production detector: activation kurtosis already leads by more on the same scenario, and the statistic needs materialized attention probabilities that SDPA/flash attention never produce (see VISION.md).
+
 ### Changed
-- Gradient metrics skip the elementwise non-finite count when the gradient norm is finite (a finite norm proves every element is finite). Measured on a 15M-param CPU workload: 1.036× step-time gain [1.024, 1.042] 99% CI.
+- Gradient metrics skip the elementwise non-finite count when the gradient norm is finite (a finite norm proves every element is finite). Measured on a 15M-param CPU training workload, end to end: 1.036× gain [1.024, 1.042] 99% CI.
 - README documents CPU overhead measured on a 15M-param transformer (~40% with the default config; the exact activation median is the largest single cost).
 
 ## [1.8.1] - Calibration & Dead-Code Fixes

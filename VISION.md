@@ -129,18 +129,26 @@ no single mechanical cascade to anchor a UI "primary alarm". Implication: do NOT
 signal to primary-alarm status; the Spike Inspector should present all signals as independent
 evidence, and the earlier "kurtosis first" UI implication is withdrawn.
 
-**Attention collapse (v1.8.0, in progress).** The third candidate architecture
-class — attention concentration/uniformization (lazy-head / rank collapse) —
-has its verification script (`scripts/verify_attention_collapse_signal.py`),
-built with the same stable-control vs LR-ramp methodology. Two candidate
-statistics are measured per step (worst head across blocks): max attention
-weight and normalized attention entropy, each with a durable 3-step crossing
-rule. This script has **not yet been calibrated**: its thresholds follow the
-"control max + margin" rule, but the control's observed ceiling has not been
-measured in this repo yet, so the script prints the ceilings for calibration.
-Until it runs to a result, the attention signal is an experiment, not a claim;
-if the result is negative, it joins the rejection list below as measured-and-
-rejected.
+**Attention collapse (calibrated, not promoted).** The third candidate
+architecture class — attention concentration/uniformization (lazy-head /
+rank collapse) — was tested with `scripts/verify_attention_collapse_signal.py`
+(same stable-control vs LR-ramp methodology; worst head across blocks,
+durable 3-step crossing). Calibration on wikitext-2, seeds 1/7/42:
+
+- **Max attention weight is a real signal.** The stable control's ceiling is
+  0.566, well under the 0.85 threshold; it fired in 3/3 LR-ramp runs, 12–16
+  steps (mean 13.7) before the explosion, and in 0/3 controls.
+- **Normalized entropy is not.** It never crossed 0.95 in either condition,
+  and its LR-ramp peak (0.745) is indistinguishable from the control (0.741).
+
+It is **not promoted to a production detector**, by this document's own
+"no signal without a question it answers" rule: on the same scenario,
+activation kurtosis — recorded for every model with no naming convention —
+leads by 15–17 steps, so max attention weight adds no earlier warning. It
+would also only work where attention probabilities are materialized (eager
+attention); SDPA/flash kernels, the default in practice, never produce them.
+Revisit if a scenario shows attention concentration leading the existing
+signals.
 
 ### Phase 3 — "Can trainscope defend itself?"
 
@@ -209,7 +217,8 @@ edges, in priority order:
    data, calibrate its thresholds against the control's observed ceiling,
    and promote the attention signal to a production detector + UI panel
    (mirroring the MoE/addressor path) — or reject it as measured-and-not-a-
-   signal. This is the only remaining empirical gate.
+   signal. **Done:** calibrated; max attention weight is a real but
+   redundant signal and stays an experiment (see Phase 2 above).
 2. **Phase 1 depth: attribute clusters to a single cause.** The Runs view
    already reports discriminant config traits and counterexamples; the
    natural next step is making the attribution sharper — a ranked list of
