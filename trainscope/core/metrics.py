@@ -102,6 +102,29 @@ def _sharded_histogram(weight: DTensor, n_bins: int) -> tuple[list[float], list[
     return [float(v) for v in counts_t.tolist()], [float(v) for v in edges.tolist()]
 
 
+def _activation_stats(act: torch.Tensor, device: str | torch.device) -> torch.Tensor:
+    """``[mean, std, min, max, kurtosis, median]`` of a non-empty activation, left
+    on ``device`` so callers can read many of them back in one transfer."""
+    act_f = _to_compute_device(act, device)
+    std, mean = torch.std_mean(act_f, correction=0)
+    lo, hi = torch.aminmax(act_f)
+    kurtosis = (((act_f - mean) / std) ** 4).mean() - 3.0
+    return torch.stack([mean, std, lo, hi, kurtosis, act_f.median()])
+
+
+def _activation_metrics_from_stats(vals: list[float]) -> dict:
+    mean, std, lo, hi, kurtosis, median = vals
+    return {
+        "act_mean": mean,
+        "act_std": std,
+        "act_max_abs": max(-lo, hi),
+        "act_kurtosis": 0.0 if std == 0.0 else kurtosis,
+        "act_min": lo,
+        "act_max": hi,
+        "act_median": median,
+    }
+
+
 def compute_activation_metrics(act: torch.Tensor, device: str | torch.device = "cpu") -> dict:
     if act.numel() == 0:
         return {
@@ -113,27 +136,7 @@ def compute_activation_metrics(act: torch.Tensor, device: str | torch.device = "
             "act_max": 0.0,
             "act_median": 0.0,
         }
-
-    act_f = _to_compute_device(act, device)
-    mean = act_f.mean()
-    std = act_f.std(unbiased=False)
-    max_abs = act_f.abs().max()
-
-    if std.item() == 0.0:
-        kurtosis = 0.0
-    else:
-        normalized = (act_f - mean) / std
-        kurtosis = float((normalized**4).mean().item()) - 3.0
-
-    return {
-        "act_mean": float(mean.item()),
-        "act_std": float(std.item()),
-        "act_max_abs": float(max_abs.item()),
-        "act_kurtosis": kurtosis,
-        "act_min": float(act_f.min().item()),
-        "act_max": float(act_f.max().item()),
-        "act_median": float(act_f.median().item()),
-    }
+    return _activation_metrics_from_stats(_activation_stats(act, device).tolist())
 
 
 def compute_gradient_metrics(grad: torch.Tensor | None, device: str | torch.device = "cpu") -> dict:
