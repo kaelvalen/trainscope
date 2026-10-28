@@ -50,6 +50,29 @@ All data is written to Arrow files (locally or to a remote store via fsspec); th
 
 ## Quick start
 
+**Hugging Face `Trainer`** (`pip install trainscope[huggingface]`):
+
+```python
+from trainscope.integrations.huggingface import TrainScopeCallback
+
+trainer = Trainer(model=model, args=args, train_dataset=ds, callbacks=[TrainScopeCallback()])
+```
+
+**PyTorch Lightning** (`pip install trainscope[lightning]`):
+
+```python
+from trainscope.integrations.lightning import TrainScopeCallback
+
+trainer = L.Trainer(callbacks=[TrainScopeCallback()])
+```
+
+Both record one step per optimizer step (after gradient accumulation, with AMP
+gradients and loss unscaled), give each rank its own run under multi-GPU
+training, and accept a `TrainScopeConfig`. With `stop_on_spike=True` they stop
+training gracefully.
+
+**Plain PyTorch loop:**
+
 ```python
 from trainscope import TrainScope
 from trainscope.core.config import TrainScopeConfig
