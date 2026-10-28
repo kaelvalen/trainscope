@@ -291,6 +291,8 @@ Measured on CPU with a 2-layer GPT-2 (~430K parameters). GPU overhead is ~3–8�
 
 CPU measured on 2-layer mini-GPT (~430K params), Apple M2. GPU measured on the same model with CUDA. Results scale with parameter count and layer count.
 
+At a larger scale on CPU: an 8-layer transformer (15M params, 99 parameter tensors, batch 8×64, AdamW) on an AMD Ryzen 7 with 4 threads runs at 132 ms/step without TrainScope and 185 ms/step with the default config (~40%). The largest single cost is the exact activation median (computed every `activation_metrics_every_n_steps`); raise that interval or set `activation_layer_filter` to cut it. GPU overhead at this scale has not been re-measured.
+
 ## Development
 
 The project uses a Nix flake for the development shell:
