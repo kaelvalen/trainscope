@@ -129,13 +129,13 @@ class TrainScope:
     def _metric_device(self, tensor: torch.Tensor) -> str | torch.device:
         """Return the device on which ``tensor`` should be inspected.
 
-        By default metrics are computed on CPU to avoid GPU synchronization.
-        Set ``config.device`` explicitly (e.g. to the tensor's device or another
-        device) to override this.
+        By default metrics are computed where the tensor lives: moving every
+        parameter, gradient and activation to the host each step costs far more
+        than the reductions themselves. Set ``config.device`` to offload instead.
         """
         if self._config.device is not None:
             return self._config.device
-        return "cpu"
+        return tensor.device
 
     def attach(self) -> "TrainScope":
         detector_cfg = self._config.detector
