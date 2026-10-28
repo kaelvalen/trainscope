@@ -104,6 +104,14 @@ unscaled (otherwise they are inflated by the loss scale, e.g. 65536×):
 scope = TrainScope(model, optimizer, config, scaler=scaler).attach()
 ```
 
+**Distributed training:** create one `TrainScope` per rank with
+`TrainScopeConfig(rank=rank)` (the HF/Lightning callbacks do this for you);
+each rank writes its own `<run>_rank{N}` directory. Under DDP every rank holds
+full replicas. Under FSDP2 (`fully_shard`) per-layer and global gradient/weight
+metrics are the true **global** values, combined from the shards with
+all-reduces (no parameter is gathered); losses and activations stay per rank.
+Every rank must call `step()` on the same steps.
+
 Open the run in the browser UI:
 
 ```bash

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import torch.distributed as dist
 import torch.nn as nn
 from torch.optim import Optimizer
 
@@ -17,6 +18,8 @@ from trainscope.core.detectors.addressor_concentration import (
 )
 from trainscope.core.detectors.expert_utilization import ExpertUtilizationDriftDetector
 from trainscope.core.metrics import (
+    _is_sharded,
+    _unshard,
     compute_activation_metrics,
     compute_gradient_metrics,
     compute_weight_histogram,
@@ -112,6 +115,12 @@ class TrainScope:
 
         self._callbacks = build_callbacks(self._config.integrations)
         self._alerters = build_alerters(self._config.alerts)
+
+        # FSDP2-sharded parameters make per-layer metrics collectives: every rank
+        # must then take the same histogram decision (see step()).
+        self._sharded_device = next(
+            (p.to_local().device for p in model.parameters() if _is_sharded(p)), None
+        )
 
     @property
     def writer(self) -> DiskWriter | RemoteWriter:
@@ -243,12 +252,33 @@ class TrainScope:
             sum(1 for n in targets if "addressor" in n),
         )
 
-    def _compute_global_grad_norm(self) -> float:
+    @staticmethod
+    def _global_l2_norm(tensors: list[torch.Tensor]) -> float:
+        """L2 norm over all ``tensors``, including FSDP2-sharded ones.
+
+        ``DTensor.norm().item()`` would read only the local shard's partial
+        norm, so sharded tensors contribute local sums of squares that are
+        all-reduced once.
+        """
         total_sq = 0.0
-        for param in self._model.parameters():
-            if param.grad is not None:
-                total_sq += float(param.grad.detach().float().norm(2).item() ** 2)
+        sharded_sq: torch.Tensor | None = None
+        group = None
+        for t in tensors:
+            if _is_sharded(t):
+                local_sq = t.to_local().detach().float().norm(2) ** 2
+                sharded_sq = local_sq if sharded_sq is None else sharded_sq + local_sq
+                group = t.device_mesh.get_group()
+            else:
+                total_sq += float(_unshard(t).detach().float().norm(2).item() ** 2)
+        if sharded_sq is not None:
+            dist.all_reduce(sharded_sq, group=group)
+            total_sq += float(sharded_sq)
         return math.sqrt(total_sq)
+
+    def _compute_global_grad_norm(self) -> float:
+        return self._global_l2_norm(
+            [p.grad for p in self._model.parameters() if p.grad is not None]
+        )
 
     def _grad_inv_scale(self) -> float:
         """1/scale while the GradScaler still holds scaled grads, else 1."""
@@ -267,13 +297,14 @@ class TrainScope:
         # class-name match: fused/8-bit/wrapped optimizers (bitsandbytes,
         # apex, deepspeed) and user subclasses of Adam/AdamW all expose
         # "exp_avg_sq" in their state but carry different class names.
-        total_sq = 0.0
         state = self._optimizer.state
-        for param in self._model.parameters():
-            if param in state and "exp_avg_sq" in state[param]:
-                v = state[param]["exp_avg_sq"]
-                total_sq += float(v.detach().float().norm(2).item() ** 2)
-        return math.sqrt(total_sq)
+        return self._global_l2_norm(
+            [
+                state[p]["exp_avg_sq"]
+                for p in self._model.parameters()
+                if p in state and "exp_avg_sq" in state[p]
+            ]
+        )
 
     def _get_lr(self) -> float:
         return float(self._optimizer.param_groups[0]["lr"])
@@ -370,7 +401,16 @@ class TrainScope:
             except Exception:
                 logger.exception("Failed to append MoE routing data for %s", block_name)
 
-        should_histogram = step_idx % self._config.histogram_every_n_steps == 0 or is_spike
+        histogram_on_spike = is_spike
+        if self._sharded_device is not None:
+            # Spikes are detected per rank (each sees its own loss); histograms of
+            # sharded weights are collectives, so any rank's spike triggers them all.
+            flag = torch.tensor([float(is_spike)], device=self._sharded_device)
+            dist.all_reduce(flag, op=dist.ReduceOp.MAX)
+            histogram_on_spike = bool(flag.item())
+        should_histogram = (
+            step_idx % self._config.histogram_every_n_steps == 0 or histogram_on_spike
+        )
 
         global_snap = {
             "step": step_idx,

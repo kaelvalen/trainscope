@@ -1,6 +1,17 @@
 import math
+from typing import TypeGuard
 
 import torch
+import torch.distributed as dist
+
+try:
+    from torch.distributed.tensor import DTensor, Shard
+except ImportError:  # torch < 2.4: no public DTensor, so no FSDP2 parameters either
+    DTensor = None  # type: ignore[assignment,misc]
+
+
+def _is_dtensor(tensor: torch.Tensor) -> TypeGuard[DTensor]:
+    return DTensor is not None and isinstance(tensor, DTensor)
 
 
 def _to_compute_device(tensor: torch.Tensor, device: str | torch.device) -> torch.Tensor:
@@ -9,6 +20,86 @@ def _to_compute_device(tensor: torch.Tensor, device: str | torch.device) -> torc
     if str(flat.device) == str(device):
         return flat
     return flat.to(device)
+
+
+def _is_sharded(tensor: torch.Tensor) -> TypeGuard[DTensor]:
+    """A DTensor sharded over a 1-D mesh (FSDP2 ``fully_shard``)."""
+    return (
+        _is_dtensor(tensor)
+        and tensor.device_mesh.ndim == 1
+        and isinstance(tensor.placements[0], Shard)
+    )
+
+
+def _unshard(tensor: torch.Tensor) -> torch.Tensor:
+    # shortcut: DTensors on multi-dim (HSDP/TP) or replicated meshes are gathered
+    # whole; reduce per sharded mesh dim if that memory spike matters.
+    return tensor.full_tensor() if _is_dtensor(tensor) else tensor
+
+
+def _sharded_moments(tensor: DTensor) -> dict[str, float]:
+    """Global statistics of a sharded DTensor from per-shard partials.
+
+    DTensor's own reductions fail when a rank's shard is empty (a parameter
+    smaller than the world size), so each rank reduces its local shard with
+    identity values for the empty case and two all-reduces combine them.
+    """
+    group = tensor.device_mesh.get_group()
+    local = tensor.to_local().detach().double().flatten()
+    sums = torch.stack(
+        [
+            local.new_tensor(float(local.numel())),
+            local.sum(),
+            (local * local).sum(),
+            (~torch.isfinite(local)).sum().double(),
+        ]
+    )
+    if local.numel():
+        extremes = torch.stack([local.max(), -local.min(), local.abs().max()])
+    else:
+        extremes = local.new_full((3,), -math.inf)
+    dist.all_reduce(sums, group=group)
+    dist.all_reduce(extremes, op=dist.ReduceOp.MAX, group=group)
+    n, total, total_sq, nonfinite = sums.tolist()
+    max_v, neg_min, max_abs = extremes.tolist()
+    mean = total / n
+    return {
+        "n": n,
+        "mean": mean,
+        "std": math.sqrt(max(total_sq / n - mean * mean, 0.0)),
+        "l2": math.sqrt(total_sq),
+        "max": max_v,
+        "min": -neg_min,
+        "max_abs": max_abs,
+        "nonfinite": nonfinite,
+    }
+
+
+def _sharded_histogram(weight: DTensor, n_bins: int) -> tuple[list[float], list[float]]:
+    """Histogram of a 1-D-mesh sharded DTensor without gathering it: the global
+    range and the bin counts are all-reduced across the shards."""
+    group = weight.device_mesh.get_group()
+    local = weight.to_local().detach().float().flatten()
+    finite = local[torch.isfinite(local)]
+    if finite.numel():
+        bounds = torch.stack([-finite.min(), finite.max()])
+    else:
+        bounds = torch.full((2,), -math.inf, device=local.device)
+    dist.all_reduce(bounds, op=dist.ReduceOp.MAX, group=group)
+    w_min, w_max = -float(bounds[0]), float(bounds[1])
+    if not math.isfinite(w_min):
+        return [0.0] * n_bins, [0.0] * (n_bins + 1)
+    if w_min == w_max:
+        # Same layout as the unsharded constant-tensor case.
+        count = torch.tensor([float(finite.numel())], device=local.device)
+        dist.all_reduce(count, group=group)
+        counts = [0.0] * n_bins
+        counts[n_bins // 2] = float(count)
+        return counts, [w_min + i - n_bins / 2 for i in range(n_bins + 1)]
+    counts_t = torch.histc(finite, bins=n_bins, min=w_min, max=w_max)
+    dist.all_reduce(counts_t, group=group)
+    edges = torch.linspace(w_min, w_max, n_bins + 1)
+    return [float(v) for v in counts_t.tolist()], [float(v) for v in edges.tolist()]
 
 
 def compute_activation_metrics(act: torch.Tensor, device: str | torch.device = "cpu") -> dict:
@@ -54,7 +145,15 @@ def compute_gradient_metrics(grad: torch.Tensor | None, device: str | torch.devi
             "grad_mean": 0.0,
         }
 
-    grad_f = _to_compute_device(grad, device)
+    if _is_sharded(grad):
+        m = _sharded_moments(grad)
+        return {
+            "grad_l2_norm": m["l2"],
+            "grad_nan_inf_ratio": m["nonfinite"] / m["n"],
+            "grad_max_abs": m["max_abs"],
+            "grad_mean": m["mean"],
+        }
+    grad_f = _to_compute_device(_unshard(grad), device)
     l2_norm = float(grad_f.norm(2).item())
     # A finite norm proves every element is finite (NaN/Inf propagate), so the
     # elementwise count is only needed when the norm is not.
@@ -81,7 +180,16 @@ def compute_weight_metrics(weight: torch.Tensor, device: str | torch.device = "c
             "weight_min": 0.0,
         }
 
-    w_f = _to_compute_device(weight, device)
+    if _is_sharded(weight):
+        m = _sharded_moments(weight)
+        return {
+            "weight_l2_norm": m["l2"],
+            "weight_mean": m["mean"],
+            "weight_std": m["std"],
+            "weight_max_abs": m["max_abs"],
+            "weight_min": m["min"],
+        }
+    w_f = _to_compute_device(_unshard(weight), device)
     return {
         "weight_l2_norm": float(w_f.norm(2).item()),
         "weight_mean": float(w_f.mean().item()),
@@ -102,7 +210,9 @@ def compute_weight_histogram(
         counts = [0.0] * n_bins
         return counts, edges
 
-    w_f = _to_compute_device(weight, device)
+    if _is_sharded(weight):
+        return _sharded_histogram(weight, n_bins)
+    w_f = _to_compute_device(_unshard(weight), device)
     finite = w_f[torch.isfinite(w_f)]
 
     if finite.numel() == 0:
