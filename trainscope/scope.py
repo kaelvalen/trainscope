@@ -263,13 +263,19 @@ class TrainScope:
         total_sq = 0.0
         sharded_sq: torch.Tensor | None = None
         group = None
+        # Norms stay on their device and are read once per device: a per-tensor
+        # .item() is a device sync.
+        norms_by_device: dict[torch.device, list[torch.Tensor]] = {}
         for t in tensors:
             if _is_sharded(t):
                 local_sq = t.to_local().detach().float().norm(2) ** 2
                 sharded_sq = local_sq if sharded_sq is None else sharded_sq + local_sq
                 group = t.device_mesh.get_group()
             else:
-                total_sq += float(_unshard(t).detach().float().norm(2).item() ** 2)
+                full = _unshard(t).detach()
+                norms_by_device.setdefault(full.device, []).append(full.float().norm(2))
+        for norms in norms_by_device.values():
+            total_sq += float(torch.stack(norms).double().pow(2).sum())
         if sharded_sq is not None:
             dist.all_reduce(sharded_sq, group=group)
             total_sq += float(sharded_sq)
