@@ -61,11 +61,11 @@ dev = [
     "httpx>=0.27",
     "prometheus-client>=0.20",
     "ruptures>=1.1",
-    "transformers>=4.41",
+    "transformers[torch]>=4.41",
     "lightning>=2.0",
 ]
 huggingface = [
-    "transformers>=4.41",
+    "transformers[torch]>=4.41",
 ]
 lightning = [
     "lightning>=2.0",
