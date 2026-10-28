@@ -154,7 +154,10 @@ def compute_gradient_metrics(grad: torch.Tensor | None, device: str | torch.devi
             "grad_mean": m["mean"],
         }
     grad_f = _to_compute_device(_unshard(grad), device)
-    l2_norm = float(grad_f.norm(2).item())
+    # One host transfer for all statistics: each .item() is a device sync.
+    l2_norm, max_abs, mean = torch.stack(
+        [grad_f.norm(2), grad_f.abs().max(), grad_f.mean()]
+    ).tolist()
     # A finite norm proves every element is finite (NaN/Inf propagate), so the
     # elementwise count is only needed when the norm is not.
     if math.isfinite(l2_norm):
@@ -165,8 +168,8 @@ def compute_gradient_metrics(grad: torch.Tensor | None, device: str | torch.devi
     return {
         "grad_l2_norm": l2_norm,
         "grad_nan_inf_ratio": float(nan_inf_ratio),
-        "grad_max_abs": float(grad_f.abs().max().item()),
-        "grad_mean": float(grad_f.mean().item()),
+        "grad_max_abs": max_abs,
+        "grad_mean": mean,
     }
 
 
@@ -190,12 +193,15 @@ def compute_weight_metrics(weight: torch.Tensor, device: str | torch.device = "c
             "weight_min": m["min"],
         }
     w_f = _to_compute_device(_unshard(weight), device)
+    l2_norm, mean, std, max_abs, min_v = torch.stack(
+        [w_f.norm(2), w_f.mean(), w_f.std(unbiased=False), w_f.abs().max(), w_f.min()]
+    ).tolist()
     return {
-        "weight_l2_norm": float(w_f.norm(2).item()),
-        "weight_mean": float(w_f.mean().item()),
-        "weight_std": float(w_f.std(unbiased=False).item()),
-        "weight_max_abs": float(w_f.abs().max().item()),
-        "weight_min": float(w_f.min().item()),
+        "weight_l2_norm": l2_norm,
+        "weight_mean": mean,
+        "weight_std": std,
+        "weight_max_abs": max_abs,
+        "weight_min": min_v,
     }
 
 
