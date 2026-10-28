@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.9.0] - Framework Integrations & GPU Overhead
 
 ### Added
 - **Hugging Face `Trainer` callback.** `trainscope.integrations.huggingface.TrainScopeCallback` records each optimizer step in `on_pre_optimizer_step` (after accumulation, AMP unscaling and clipping). The step loss matches the Trainer's own `train_loss` both when the model normalizes micro-batch losses by `num_items_in_batch` (summed) and when it does not (averaged).
