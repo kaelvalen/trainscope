@@ -280,11 +280,6 @@ class TrainScope:
             total_sq += float(sharded_sq)
         return math.sqrt(total_sq)
 
-    def _compute_global_grad_norm(self) -> float:
-        return self._global_l2_norm(
-            [p.grad for p in self._model.parameters() if p.grad is not None]
-        )
-
     def _grad_inv_scale(self) -> float:
         """1/scale while the GradScaler still holds scaled grads, else 1."""
         scaler = self._scaler
@@ -378,7 +373,16 @@ class TrainScope:
         # via grad_norm_after_clip; it is then recorded instead of mirroring
         # the pre-clip reading.
         inv_scale = self._grad_inv_scale()
-        grad_norm_before = self._compute_global_grad_norm() * inv_scale
+        named_params = list(self._model.named_parameters())
+        devices = [self._metric_device(p.data) for _, p in named_params]
+        param_metrics = compute_param_metrics(
+            [p.data for _, p in named_params], [p.grad for _, p in named_params], devices
+        )
+        # Per-parameter L2s are already global (sharded ones are all-reduced), so
+        # the global norm is their root sum of squares, not another pass.
+        grad_norm_before = (
+            math.sqrt(sum(gm["grad_l2_norm"] ** 2 for _, gm in param_metrics)) * inv_scale
+        )
         grad_norm_after = grad_norm_before if grad_norm_after_clip is None else grad_norm_after_clip
 
         optimizer_v_norm = self._compute_optimizer_v_norm()
@@ -437,11 +441,6 @@ class TrainScope:
         self._run_metric_plugins(step_idx)
 
         layer_snaps: dict[str, dict] = {}
-        named_params = list(self._model.named_parameters())
-        devices = [self._metric_device(p.data) for _, p in named_params]
-        param_metrics = compute_param_metrics(
-            [p.data for _, p in named_params], [p.grad for _, p in named_params], devices
-        )
         for (name, param), compute_dev, (weight_metrics, grad_metrics) in zip(
             named_params, devices, param_metrics
         ):
