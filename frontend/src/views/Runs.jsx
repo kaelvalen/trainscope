@@ -262,7 +262,7 @@ export default function Runs() {
             ))}
             {clusters.unclustered?.length > 0 && (
               <p className="text-xs text-muted">
-                {clusters.unclustered.length} run(s) without signal data:
+                {clusters.unclustered.length} stable run(s), no early-warning signal fired:{' '}
                 {clusters.unclustered.join(', ')}
               </p>
             )}
