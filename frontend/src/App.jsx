@@ -1,4 +1,4 @@
-import { Suspense, lazy, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { useRun } from './RunContext.jsx'
 import ErrorMessage from './components/ErrorMessage.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
@@ -41,8 +41,18 @@ function LoadingSkeleton() {
   )
 }
 
+// The active view lives in the URL hash so views are linkable and survive reloads.
+const tabFromHash = () =>
+  Math.max(
+    0,
+    NAV_ITEMS.findIndex((item) => `#${item.id}` === window.location.hash)
+  )
+
 export default function App() {
-  const [activeTab, setActiveTab] = useState(0)
+  const [activeTab, setActiveTab] = useState(tabFromHash)
+  useEffect(() => {
+    window.history.replaceState(null, '', `#${NAV_ITEMS[activeTab].id}`)
+  }, [activeTab])
   const [mobileOpen, setMobileOpen] = useState(false)
   const { meta, spikes, spikeEvents, loading, error, refresh, isReady, liveStatus, lastUpdatedAt } =
     useRun()
