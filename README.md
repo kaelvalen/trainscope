@@ -299,19 +299,22 @@ Anything not listed here (integration helper details, CLI output formatting) is 
 ## Overhead
 
 Per-step time with the default config (every step traced, histograms every 50
-steps, activation metrics every 5), median over 35 steps:
+steps, activation metrics every 5), over 35 steps:
 
 | Setup | Without TrainScope | With TrainScope | Overhead |
 |-------|-------------------|-----------------|----------|
-| GPU: 12-layer transformer, 97M params, bf16 autocast, batch 8×128, RTX 5060 Laptop | 53–54 ms | 83 ms | ~55% |
+| GPU: 12-layer transformer, 97M params, bf16 autocast, batch 8×128, RTX 5060 Laptop | 61–63 ms | 76–78 ms median, 79–82 ms mean | ~25% |
 | CPU: 8-layer transformer, 15M params, batch 8×64, Ryzen 7 (4 threads) | 132 ms | 185 ms | ~40% |
 
-The GPU row is after this release's fixes; before them the same setup took
-236 ms/step (+340%), because metrics were computed on the CPU. TrainScope's
-cost is per parameter tensor and per traced step, not per token, so it shrinks
-relative to training as batch size and sequence length grow. To cut it, trace
-fewer steps (`trace_every_n_steps`), raise `activation_metrics_every_n_steps`,
-or restrict activations with `activation_layer_filter`.
+On GPU that is ~15 ms per step for 97M parameters, most of it two
+bandwidth-bound reads of every weight and gradient. Earlier releases took
+236 ms/step on the same setup (metrics on the CPU, one device sync per
+statistic). The CPU row was measured before the GPU fusion work, which had no
+measurable effect there. TrainScope's cost is per parameter and per traced
+step, not per token, so it shrinks relative to training as batch size and
+sequence length grow. To cut it, trace fewer steps (`trace_every_n_steps`),
+raise `activation_metrics_every_n_steps`, or restrict activations with
+`activation_layer_filter`.
 
 
 ## Development
