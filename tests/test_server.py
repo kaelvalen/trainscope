@@ -1327,3 +1327,26 @@ class TestClusterLead:
         assert cluster["first_signal"] == "kurtosis"
         # explosion (60) - first crossing (45) = 15.
         assert cluster["typical_lead_steps"] == 15.0
+
+
+def test_layer_matrix(client):
+    body = client.get("/api/layers/matrix?buckets=5").json()
+    assert set(body) == {"layers", "bucket_starts", "values", "z", "baseline"}
+    assert body["layers"] and len(body["values"]) == len(body["layers"])
+
+
+def test_layer_matrix_rejects_unknown_metric(client):
+    assert client.get("/api/layers/matrix?metric=hist_counts").status_code == 400
+
+
+def test_layer_matrix_without_layers(tmp_path):
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "meta.json").write_text("{}")
+    with TestClient(create_app(str(run))) as c:
+        assert c.get("/api/layers/matrix").json()["layers"] == []
+
+
+def test_signals(client):
+    body = client.get("/api/signals").json()
+    assert {"fired", "first", "first_steps", "explosion_step"} <= set(body)
