@@ -14,7 +14,7 @@ pip install trainscope
 trainscope demo   # trains 4 tiny runs (~10 s on CPU), 2 of which diverge, and opens the UI
 ```
 
-![Runs index: every run with its status and cluster, and the diverging runs grouped by their first early-warning signal](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/runs-view.png)
+![Overview of a diverging run: loss and grad norm on a shared step axis, the layer heatmap below, and the signals that crossed before the spike](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/overview.png)
 
 ## Table of contents
 
@@ -171,7 +171,29 @@ Six tabs and a runs index, one command:
 
 Each view has its own URL (`http://127.0.0.1:7007/#spikes`), so a link to a view can be shared and survives a reload; the 1.9.0 links (`#timeline`, `#diff`, …) still work. The UI follows your system's light or dark setting and loads no fonts or scripts from the network.
 
+### Screenshots
+
+All taken from `trainscope demo` (two runs diverge under a learning-rate ramp, two stay stable).
+
+**Overview.** Loss and grad norm on one step axis, the layer heatmap aligned underneath, and the signals that crossed before the spike with their lead. The loss line leaves the plot at the explosion with an off-scale marker instead of flattening the history.
+
 ![Overview: loss and grad norm on a shared step axis, the layer heatmap below them, and the signals that crossed before the spike](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/overview.png)
+
+**Dark mode** follows the system setting, from its own palette rather than an inverted one.
+
+![Overview in dark mode](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/overview-dark.png)
+
+**Runs index.** Every run with its status and cluster, and the diverging runs grouped by the signal that fired first.
+
+![Runs index: every run with its status and cluster, and the diverging runs grouped by their first early-warning signal](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/runs-view.png)
+
+**Layers.** One parameter tensor's gradient, weight and activation signals, with the weight histogram at any step.
+
+![Layers: gradient L2 over the run for one tensor, a step scrubber, and the weight histogram with outlier bins in red](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/layers-view.png)
+
+**Spikes.** The root-cause cascade for a spike, with loss, grad norm and per-layer signals around it on a shared cursor.
+
+![Spikes: the cascade summary for the spike at step 113 and the loss, grad norm and layer charts around it](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/spikes-view.png)
 
 The React UI is served by default after `pip install trainscope` (pre-compiled assets included). If developing from source:
 
