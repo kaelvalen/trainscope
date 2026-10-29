@@ -88,10 +88,10 @@ describe('ExpertUtilization view', () => {
       </ToastProvider>
     )
     await waitFor(() =>
-      expect(screen.getByText(/Routing shares — blocks\.0\.router/)).toBeInTheDocument()
+      expect(screen.getByText(/Routing shares in blocks\.0\.router/)).toBeInTheDocument()
     )
-    expect(screen.getByText(/Routing shares — blocks\.1\.router/)).toBeInTheDocument()
-    expect(screen.getByText(/Routing shares — blocks\.0\.addressor/)).toBeInTheDocument()
+    expect(screen.getByText(/Routing shares in blocks\.1\.router/)).toBeInTheDocument()
+    expect(screen.getByText(/Routing shares in blocks\.0\.addressor/)).toBeInTheDocument()
     expect(screen.getByText('Router blocks')).toBeInTheDocument()
     // Expert 1 of block 0 has 0.90 share -> danger badge.
     expect(screen.getByText('expert 1: 0.90')).toBeInTheDocument()
