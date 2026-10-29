@@ -10,6 +10,7 @@ import { Panel } from '../components/ui/Panel.jsx'
 import { StatStrip } from '../components/ui/StatStrip.jsx'
 import { StatusDot } from '../components/ui/StatusDot.jsx'
 import { runStatus } from '../utils/runStatus.js'
+import { spikeBands } from '../utils/spikeCluster.js'
 import { computeWarmupBand } from '../utils/warmup.js'
 
 const GUTTER = 132
@@ -134,7 +135,7 @@ export default function Overview() {
   const bands = useMemo(
     () => [
       ...(warmup ? [{ from: warmup.startStep, to: warmup.endStep, kind: 'warmup' }] : []),
-      ...spikeEvents.map((e) => ({ from: e.startStep, to: e.endStep, kind: 'spike' })),
+      ...spikeBands(spikeEvents),
     ],
     [warmup, spikeEvents]
   )

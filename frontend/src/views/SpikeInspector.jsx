@@ -1,18 +1,18 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useRun } from '../RunContext.jsx'
 import { fetchSpike, fetchSpikeLayerNames, fetchSpikeLayer } from '../api.js'
-import { spikeShape, CHART_COLORS } from '../theme.js'
+import { CHART_COLORS } from '../theme.js'
 import { diagnoseSpike } from '../utils/diagnosis.js'
-import Chart from '../components/Chart.jsx'
+import LineChart from '../components/charts/LineChart.jsx'
 import LayerSelect from '../components/LayerSelect.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
-import { Skeleton } from '../components/ui/Skeleton.jsx'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.jsx'
-import { ChartCard } from '../components/ui/ChartCard.jsx'
 import { Badge } from '../components/ui/Badge.jsx'
-import { StatCard } from '../components/ui/StatCard.jsx'
-import { Zap, TrendingDown, Activity } from 'lucide-react'
+import { Panel } from '../components/ui/Panel.jsx'
+import { Skeleton } from '../components/ui/Skeleton.jsx'
+import { StatStrip } from '../components/ui/StatStrip.jsx'
+
+const fmt = (v) => (typeof v === 'number' && Number.isFinite(v) ? String(+v.toPrecision(4)) : '—')
 
 export default function SpikeInspector() {
   const { spikes, spikeEvents } = useRun()
@@ -25,18 +25,14 @@ export default function SpikeInspector() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    if (spikes.length > 0 && selectedSpike == null) {
-      setSelectedSpike(spikes[0].step)
-    }
+    if (spikes.length > 0 && selectedSpike == null) setSelectedSpike(spikes[0].step)
   }, [spikes, selectedSpike])
 
   useEffect(() => {
-    if (selectedSpike == null) return
-
+    if (selectedSpike == null) return undefined
     let cancelled = false
     setLoading(true)
     setError(null)
-
     Promise.all([fetchSpike(selectedSpike), fetchSpikeLayerNames(selectedSpike)])
       .then(([gRows, lNames]) => {
         if (cancelled) return
@@ -49,267 +45,199 @@ export default function SpikeInspector() {
           setLayerWindow([])
         }
       })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message || 'Failed to load spike window.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
+      .catch((err) => !cancelled && setError(err?.message || 'Failed to load spike window.'))
+      .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
   }, [selectedSpike])
 
   useEffect(() => {
-    if (!selectedLayer || selectedSpike == null) return
-
+    if (!selectedLayer || selectedSpike == null) return undefined
     let cancelled = false
     fetchSpikeLayer(selectedSpike, selectedLayer)
-      .then((rows) => {
-        if (!cancelled) setLayerWindow(rows)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message || `Failed to load ${selectedLayer}.`)
-      })
-
+      .then((rows) => !cancelled && setLayerWindow(rows))
+      .catch((err) => !cancelled && setError(err?.message || `Failed to load ${selectedLayer}.`))
     return () => {
       cancelled = true
     }
   }, [selectedSpike, selectedLayer])
 
-  const currentEvent = useMemo(() => {
-    return spikeEvents.find((e) => e.steps.includes(selectedSpike)) || null
-  }, [spikeEvents, selectedSpike])
-
+  const currentEvent = useMemo(
+    () => spikeEvents.find((e) => e.steps.includes(selectedSpike)) || null,
+    [spikeEvents, selectedSpike]
+  )
   const windowSteps = useMemo(() => globalWindow.map((r) => r.step), [globalWindow])
-  const shapes = useMemo(
-    () =>
-      selectedSpike != null
-        ? [spikeShape(selectedSpike, { color: 'rgba(252, 129, 129, 0.8)' })]
-        : [],
+  const layerSteps = useMemo(() => layerWindow.map((r) => r.step), [layerWindow])
+  const markers = useMemo(
+    () => (selectedSpike != null ? [{ at: selectedSpike, kind: 'spike' }] : []),
     [selectedSpike]
   )
-  const layerSteps = useMemo(() => layerWindow.map((r) => r.step), [layerWindow])
-
-  const centerRow = useMemo(() => {
-    return globalWindow.find((r) => r.step === selectedSpike) || null
-  }, [globalWindow, selectedSpike])
-
+  const centerRow = useMemo(
+    () => globalWindow.find((r) => r.step === selectedSpike) || null,
+    [globalWindow, selectedSpike]
+  )
   const diagnosis = useMemo(
     () => diagnoseSpike(globalWindow, selectedSpike, currentEvent),
     [globalWindow, selectedSpike, currentEvent]
   )
 
-  if (spikes.length === 0) {
-    return (
-      <EmptyState icon={<Zap className="h-5 w-5" />}>No spikes recorded in this run.</EmptyState>
-    )
-  }
+  if (spikes.length === 0) return <EmptyState>No spikes recorded in this run.</EmptyState>
 
   return (
-    <div className="space-y-5">
-      <Card className="control-card">
-        <CardHeader>
-          <div>
-            <CardTitle>Select an anomaly event</CardTitle>
-            <p className="chart-card__description">
-              Start at the first detection or jump straight to the peak step.
-            </p>
-          </div>
-          {diagnosis && (
-            <Badge variant={diagnosis.badgeVariant}>
-              <Zap className="h-3 w-3" />
-              {diagnosis.primaryTrigger}
-            </Badge>
-          )}
-        </CardHeader>
-        <CardContent>
-          <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-            <label htmlFor="spike-select" className="control-label shrink-0">
-              Event / step
-            </label>
-            <select
-              id="spike-select"
-              value={selectedSpike ?? ''}
-              onChange={(e) => setSelectedSpike(Number(e.target.value))}
-              className="control-select min-w-0 flex-1 sm:max-w-[34rem]"
-            >
-              <option value="">— select —</option>
-              {spikeEvents.length > 0
-                ? spikeEvents.map((ev) => (
-                    <optgroup key={ev.id} label={ev.label}>
-                      <option value={ev.startStep}>Step {ev.startStep} (First Detection)</option>
-                      {ev.peakStep !== ev.startStep && (
-                        <option value={ev.peakStep}>
-                          Step {ev.peakStep} (Highest Observed Loss)
-                        </option>
-                      )}
-                    </optgroup>
-                  ))
-                : spikes.map((s) => (
-                    <option key={s.step} value={s.step}>
-                      Step {s.step}
-                    </option>
-                  ))}
-            </select>
-          </div>
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Spikes</h1>
+          <p className="mt-1 text-sm text-muted">
+            Start at the first detection or jump to the step with the highest loss.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="spike-select" className="text-sm text-muted">
+            Step
+          </label>
+          <select
+            id="spike-select"
+            value={selectedSpike ?? ''}
+            onChange={(e) => setSelectedSpike(Number(e.target.value))}
+            className="h-8 max-w-[26rem] rounded-control border border-border bg-surface px-2 text-sm"
+          >
+            {spikeEvents.length > 0
+              ? spikeEvents.map((ev) => (
+                  <optgroup key={ev.id} label={ev.label}>
+                    <option value={ev.startStep}>Step {ev.startStep}, first detection</option>
+                    {ev.peakStep !== ev.startStep && (
+                      <option value={ev.peakStep}>Step {ev.peakStep}, highest loss</option>
+                    )}
+                  </optgroup>
+                ))
+              : spikes.map((s) => (
+                  <option key={s.step} value={s.step}>
+                    Step {s.step}
+                  </option>
+                ))}
+          </select>
+        </div>
+      </div>
 
       {diagnosis && (
-        <Card className="story-card">
-          <CardHeader className="items-start pb-2">
-            <div className="min-w-0">
-              <CardTitle className="flex items-center gap-2 text-sm font-semibold text-accent">
-                <Activity className="h-4 w-4" />
-                Spike story · Step {selectedSpike}
-              </CardTitle>
-              {currentEvent && currentEvent.startStep !== currentEvent.endStep && (
-                <p className="mt-1 text-xs text-muted">
-                  Event range: Steps {currentEvent.startStep}–{currentEvent.endStep}
-                </p>
-              )}
-            </div>
-            <Badge variant={diagnosis.badgeVariant}>{diagnosis.primaryTrigger}</Badge>
-          </CardHeader>
-          <CardContent className="space-y-3 text-xs leading-relaxed">
-            <p>{diagnosis.desc}</p>
-            <p className="story-cascade pt-3">{diagnosis.cascadePath}</p>
-          </CardContent>
-        </Card>
+        <Panel
+          title={`What happened at step ${selectedSpike}`}
+          actions={<Badge variant={diagnosis.badgeVariant}>{diagnosis.primaryTrigger}</Badge>}
+        >
+          {currentEvent && currentEvent.startStep !== currentEvent.endStep && (
+            <p className="text-xs text-muted">
+              Event spans steps {currentEvent.startStep}–{currentEvent.endStep}
+            </p>
+          )}
+          <p className="mt-1 text-sm">{diagnosis.desc}</p>
+          <p className="mt-2 border-t border-border pt-2 text-sm text-muted">
+            {diagnosis.cascadePath}
+          </p>
+        </Panel>
       )}
 
-      {loading && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Skeleton className="h-96" />
-          <Skeleton className="h-96" />
-        </div>
-      )}
-
+      {loading && <Skeleton className="h-96" />}
       <ErrorMessage message={error} />
 
       {!loading && globalWindow.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          {/* Timeline pane */}
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <StatCard label="Spike Step" value={selectedSpike ?? '—'} icon={Zap} />
-              <StatCard
-                label="Loss at spike"
-                value={centerRow?.loss?.toFixed(4) ?? '—'}
-                icon={TrendingDown}
-              />
-              <StatCard
-                label="Grad Norm"
-                value={centerRow?.grad_norm_before_clip?.toFixed(4) ?? '—'}
-                icon={Activity}
-              />
-            </div>
-
-            <ChartCard
-              title="Global pre / post-spike window"
-              description="Loss and gradient norm aligned around the selected anomaly."
-            >
-              <Chart
-                data={[
+        <div className="grid gap-4 xl:grid-cols-2">
+          <div className="min-w-0 space-y-4">
+            <StatStrip
+              items={[
+                { label: 'Spike step', value: selectedSpike ?? '—' },
+                { label: 'Loss at spike', value: fmt(centerRow?.loss) },
+                { label: 'Grad norm', value: fmt(centerRow?.grad_norm_before_clip) },
+                {
+                  label: 'Window',
+                  value: `${windowSteps[0]}–${windowSteps[windowSteps.length - 1]}`,
+                },
+              ]}
+            />
+            <Panel title="Loss and gradient norm around the spike" bodyClassName="px-2 pb-2 pt-3">
+              <LineChart
+                x={windowSteps}
+                height={180}
+                xAxis={false}
+                syncKey="spike-window"
+                markers={markers}
+                series={[
                   {
-                    x: windowSteps,
-                    y: globalWindow.map((r) => r.loss),
-                    type: 'scatter',
-                    mode: 'lines',
-                    name: 'Loss',
-                    line: { color: CHART_COLORS.loss, width: 1.5 },
-                  },
-                  {
-                    x: windowSteps,
-                    y: globalWindow.map((r) => r.grad_norm_before_clip),
-                    type: 'scatter',
-                    mode: 'lines',
-                    name: 'Grad Norm',
-                    line: { color: CHART_COLORS.gradNorm, width: 1.5 },
-                    yaxis: 'y2',
+                    label: 'Loss',
+                    values: globalWindow.map((r) => r.loss),
+                    color: CHART_COLORS.loss,
                   },
                 ]}
-                layout={{
-                  height: 320,
-                  shapes,
-                  yaxis2: {
-                    overlaying: 'y',
-                    side: 'right',
-                    gridcolor: CHART_COLORS.muted,
-                    color: CHART_COLORS.gradNorm,
-                    title: {
-                      text: 'Grad Norm',
-                      font: { color: CHART_COLORS.gradNorm, size: 11 },
-                    },
-                  },
-                  legend: { orientation: 'h', y: -0.15 },
-                  margin: { t: 20, r: 60 },
-                  uirevision: 'spike-global',
-                }}
+                ariaLabel="Loss around the selected spike"
               />
-            </ChartCard>
+              <LineChart
+                x={windowSteps}
+                height={150}
+                syncKey="spike-window"
+                markers={markers}
+                series={[
+                  {
+                    label: 'Grad norm',
+                    values: globalWindow.map((r) => r.grad_norm_before_clip),
+                    color: CHART_COLORS.gradNorm,
+                  },
+                ]}
+                ariaLabel="Gradient norm around the selected spike"
+              />
+            </Panel>
           </div>
 
-          {/* Layers pane */}
-          <div className="space-y-4">
+          <div className="min-w-0 space-y-4">
             {layerNames.length > 0 && (
-              <Card className="control-card">
+              <div className="rounded-panel border border-border bg-surface px-4 py-3">
                 <LayerSelect
                   id="spike-layer-select"
-                  label="Target layer"
+                  label="Layer"
                   layers={layerNames}
                   value={selectedLayer}
                   onChange={setSelectedLayer}
                 />
-              </Card>
+              </div>
             )}
-
             {layerWindow.length > 0 && selectedLayer && (
-              <>
-                <ChartCard title="Activation kurtosis" description={selectedLayer}>
-                  <Chart
-                    data={[
+              <Panel title={selectedLayer} bodyClassName="px-2 pb-2 pt-3">
+                {layerWindow.some((r) => Number.isFinite(r.act_kurtosis)) ? (
+                  <LineChart
+                    x={layerSteps}
+                    height={150}
+                    xAxis={false}
+                    syncKey="spike-layer"
+                    markers={markers}
+                    series={[
                       {
-                        x: layerSteps,
-                        y: layerWindow.map((r) => r.act_kurtosis),
-                        type: 'scatter',
-                        mode: 'lines',
-                        name: 'Kurtosis',
-                        // Unsampled steps persist as null and render as gaps.
-                        connectgaps: false,
-                        line: { color: CHART_COLORS.kurtosis, width: 1.5 },
+                        label: 'Activation kurtosis',
+                        values: layerWindow.map((r) => r.act_kurtosis),
+                        color: CHART_COLORS.kurtosis,
                       },
                     ]}
-                    layout={{
-                      height: 260,
-                      shapes,
-                      uirevision: `spike-layer-${selectedLayer}-kurtosis`,
-                    }}
+                    ariaLabel={`Activation kurtosis of ${selectedLayer}`}
                   />
-                </ChartCard>
-
-                <ChartCard title="Gradient L2 norm" description={selectedLayer}>
-                  <Chart
-                    data={[
-                      {
-                        x: layerSteps,
-                        y: layerWindow.map((r) => r.grad_l2_norm),
-                        type: 'scatter',
-                        mode: 'lines',
-                        name: 'Grad L2',
-                        line: { color: CHART_COLORS.gradNorm, width: 1.5 },
-                      },
-                    ]}
-                    layout={{
-                      height: 260,
-                      shapes,
-                      uirevision: `spike-layer-${selectedLayer}-grad`,
-                    }}
-                  />
-                </ChartCard>
-              </>
+                ) : (
+                  <p className="px-2 pb-2 text-sm text-muted">
+                    Activation kurtosis is not recorded for this tensor.
+                  </p>
+                )}
+                <LineChart
+                  x={layerSteps}
+                  height={150}
+                  syncKey="spike-layer"
+                  markers={markers}
+                  series={[
+                    {
+                      label: 'Gradient L2',
+                      values: layerWindow.map((r) => r.grad_l2_norm),
+                      color: CHART_COLORS.gradNorm,
+                    },
+                  ]}
+                  ariaLabel={`Gradient L2 norm of ${selectedLayer}`}
+                />
+              </Panel>
             )}
           </div>
         </div>
