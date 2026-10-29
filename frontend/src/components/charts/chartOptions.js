@@ -45,6 +45,23 @@ function yRange(yMax, limit) {
   }
 }
 
+/** Marker labels sit under the series so a line passing behind them stays unbroken. */
+function drawMarkerLabels(u, markers) {
+  const { ctx, bbox } = u
+  const dpr = window.devicePixelRatio || 1
+  ctx.save()
+  ctx.font = FONT.replace('11px', `${11 * dpr}px`)
+  ctx.textAlign = 'right'
+  for (const m of markers) {
+    if (!m.label) continue
+    const x = u.valToPos(m.at, 'x', true)
+    if (x < bbox.left || x > bbox.left + bbox.width) continue
+    ctx.fillStyle = resolveColor(m.kind === 'spike' ? 'var(--red)' : 'var(--muted)')
+    ctx.fillText(m.label, x - 5 * dpr, bbox.top + bbox.height - 6 * dpr)
+  }
+  ctx.restore()
+}
+
 function drawBands(u, bands) {
   const { ctx, bbox } = u
   ctx.save()
@@ -56,6 +73,15 @@ function drawBands(u, bands) {
     ctx.fillRect(x0, bbox.top, x1 - x0, bbox.height)
   }
   ctx.restore()
+}
+
+function labelText(ctx, text, x, y, color, dpr) {
+  const w = ctx.measureText(text).width
+  ctx.fillStyle = resolveColor('var(--surface)', '#ffffff')
+  ctx.fillRect(x - w - 3 * dpr, y - 8 * dpr, w + 6 * dpr, 12 * dpr)
+  ctx.fillStyle = color
+  ctx.textAlign = 'right'
+  ctx.fillText(text, x, y)
 }
 
 function drawOverlays(u, { markers = [], limit, offScale }) {
@@ -83,11 +109,6 @@ function drawOverlays(u, { markers = [], limit, offScale }) {
     ctx.moveTo(x, bbox.top)
     ctx.lineTo(x, bbox.top + bbox.height)
     ctx.stroke()
-    if (m.label) {
-      ctx.fillStyle = color
-      ctx.textAlign = 'right'
-      ctx.fillText(m.label, x - 5 * dpr, bbox.top + bbox.height - 6 * dpr)
-    }
   }
   if (offScale) {
     const x = u.valToPos(offScale.at, 'x', true)
@@ -98,8 +119,7 @@ function drawOverlays(u, { markers = [], limit, offScale }) {
     ctx.lineTo(x - 4 * dpr, bbox.top + 8 * dpr)
     ctx.lineTo(x + 4 * dpr, bbox.top + 8 * dpr)
     ctx.fill()
-    ctx.textAlign = 'right'
-    ctx.fillText(offScale.text, x - 8 * dpr, bbox.top + 10 * dpr)
+    labelText(ctx, offScale.text, x - 8 * dpr, bbox.top + 10 * dpr, ctx.fillStyle, dpr)
   }
   ctx.restore()
 }
@@ -141,7 +161,12 @@ export function buildLineOptions(props, { width }, overlays = () => props) {
       })),
     ],
     hooks: {
-      drawClear: [(u) => drawBands(u, overlays().bands || [])],
+      drawClear: [
+        (u) => {
+          drawBands(u, overlays().bands || [])
+          drawMarkerLabels(u, overlays().markers || [])
+        },
+      ],
       draw: [(u) => drawOverlays(u, overlays())],
     },
   }

@@ -10,7 +10,7 @@ export function Panel({ title, actions, className, bodyClassName, children }) {
           {actions && <div className="flex items-center gap-3 text-xs text-muted">{actions}</div>}
         </header>
       )}
-      <div className={cn('p-4', bodyClassName)}>{children}</div>
+      <div className={bodyClassName ?? 'p-4'}>{children}</div>
     </section>
   )
 }
