@@ -45,3 +45,36 @@ def test_nonfinite_values_become_gaps():
 
 def test_empty_input():
     assert build_layer_matrix({})["layers"] == []
+
+
+def test_steps_land_in_the_bucket_their_start_labels():
+    m = build_layer_matrix({"a": [(s, float(s)) for s in range(10)]}, buckets=3)
+    starts = m["bucket_starts"]
+    assert starts == [0, 4, 7]
+    # each bucket's max is the largest step that is >= its start and < the next start
+    assert m["values"][0] == [3.0, 6.0, 9.0]
+    for span in range(1, 40):
+        for k in range(1, span + 1):
+            mm = build_layer_matrix({"a": [(s, float(s)) for s in range(span)]}, buckets=k)
+            b = mm["bucket_starts"]
+            for i, v in enumerate(mm["values"][0]):
+                end = b[i + 1] if i + 1 < len(b) else span
+                assert b[i] <= v < end
+
+
+def test_column_reader_returns_only_requested_columns(tmp_path):
+    import pyarrow as pa
+    import pyarrow.ipc as ipc
+
+    from trainscope.io.writer import read_arrow_columns_sync
+
+    path = tmp_path / "layer.arrow"
+    table = pa.table(
+        {"step": [0, 1, 2], "grad_l2_norm": [1.0, 2.0, 3.0], "hist_counts": [[1.0]] * 3}
+    )
+    for writer_factory in (ipc.new_file, ipc.new_stream):
+        with pa.OSFile(str(path), "wb") as sink, writer_factory(sink, table.schema) as w:
+            w.write_table(table)
+        cols = read_arrow_columns_sync(path, ["step", "grad_l2_norm"])
+        assert cols == {"step": [0, 1, 2], "grad_l2_norm": [1.0, 2.0, 3.0]}
+    assert read_arrow_columns_sync(tmp_path / "missing.arrow", ["step"]) == {}

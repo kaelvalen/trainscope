@@ -39,6 +39,17 @@ const RUNS = [
     last_loss: 2.1,
     is_active: false,
   },
+  {
+    name: 'run_nan',
+    model_name: 'MiniGPT',
+    detector: { name: 'z_score', threshold: 3.5 },
+    n_global_rows: 40,
+    start_time: '2026-08-05T10:00:00Z',
+    spike_count: 1,
+    last_loss: null,
+    last_loss_finite: false,
+    is_active: false,
+  },
 ]
 
 function mockFetch(payloads = {}) {
@@ -91,6 +102,7 @@ describe('Runs view', () => {
     expect(screen.getByText('MiniGPT, changepoint detector')).toBeInTheDocument()
     expect(screen.getByText('Spiked')).toBeInTheDocument()
     expect(screen.getByText('Stable')).toBeInTheDocument()
+    expect(screen.getByText('Diverged')).toBeInTheDocument()
     expect(screen.getByText('150')).toBeInTheDocument()
     expect(screen.getByText('3.2')).toBeInTheDocument()
     expect(screen.getByText('2.1')).toBeInTheDocument()

@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 let runState
@@ -13,14 +13,23 @@ vi.mock('../api.js', () => ({
   })),
   fetchSignals: vi.fn(async () => signals),
 }))
+const chartProps = []
+const heatmapProps = []
 vi.mock('../components/charts/LineChart.jsx', () => ({
-  default: () => <div data-testid="chart" />,
+  default: (props) => {
+    chartProps.push(props)
+    return <div data-testid="chart" />
+  },
 }))
 vi.mock('../components/charts/LayerHeatmap.jsx', () => ({
-  default: () => <div data-testid="heatmap" />,
+  default: (props) => {
+    heatmapProps.push(props)
+    return <div data-testid="heatmap" />
+  },
 }))
 
 import Overview from '../views/Overview.jsx'
+import { fetchLayerMatrix } from '../api.js'
 
 let signals
 const rows = (n, spikeAt = null) =>
@@ -41,7 +50,12 @@ beforeEach(() => {
     liveStatus: 'disconnected',
   }
 })
-afterEach(() => vi.clearAllMocks())
+afterEach(() => {
+  vi.clearAllMocks()
+  vi.useRealTimers()
+  chartProps.length = 0
+  heatmapProps.length = 0
+})
 
 test('waits for the first step when nothing is recorded', () => {
   runState.globalData = []
@@ -105,4 +119,43 @@ test('a single recorded step renders', async () => {
   runState.globalData = rows(1)
   render(<Overview />)
   await waitFor(() => expect(screen.getAllByTestId('chart').length).toBe(2))
+})
+
+test('a non-finite final loss (null on the wire) reads as non-finite', () => {
+  runState.globalData = [...rows(5), { step: 5, loss: null, grad_norm_before_clip: 1 }]
+  render(<Overview />)
+  expect(screen.getByText('non-finite')).toBeInTheDocument()
+})
+
+const MATRIX = { layers: ['a'], bucket_starts: [0], values: [[1]], z: [[0]], baseline: null }
+
+test('a slow matrix fetch still lands while steps keep arriving, and only one is in flight', async () => {
+  let resolve
+  fetchLayerMatrix.mockImplementation(() => new Promise((r) => (resolve = r)))
+  const { rerender } = render(<Overview />)
+  for (const n of [21, 22, 23]) {
+    runState = { ...runState, globalData: rows(n) }
+    rerender(<Overview />)
+  }
+  expect(fetchLayerMatrix).toHaveBeenCalledTimes(1)
+  resolve(MATRIX)
+  await waitFor(() => expect(heatmapProps.at(-1).matrix).toEqual(MATRIX))
+})
+
+test('hovering does not rebuild the chart series', async () => {
+  render(<Overview />)
+  await waitFor(() => expect(chartProps.length).toBeGreaterThan(0))
+  const before = chartProps.at(-1).series
+  act(() => chartProps.at(-1).onCursor(7))
+  expect(chartProps.at(-1).series).toBe(before)
+})
+
+test('zooming refetches the heatmap for the visible range', async () => {
+  fetchLayerMatrix.mockResolvedValue(MATRIX)
+  render(<Overview />)
+  await waitFor(() => expect(chartProps.length).toBeGreaterThan(0))
+  act(() => chartProps.at(-1).onSelectRange([4.2, 11.7]))
+  await waitFor(() =>
+    expect(fetchLayerMatrix).toHaveBeenCalledWith(expect.objectContaining({ start: 4, end: 12 }))
+  )
 })

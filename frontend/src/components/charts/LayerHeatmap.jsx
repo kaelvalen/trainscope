@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { readToken } from '../../theme.js'
 import {
   firstCrossings,
@@ -7,6 +7,7 @@ import {
   sortRows,
   zColor,
 } from '../../utils/layerMatrix.js'
+import { bandSpan } from './chartOptions.js'
 import './charts.css'
 
 const ROW = 16
@@ -37,6 +38,7 @@ export default function LayerHeatmap({
 }) {
   const wrapRef = useRef(null)
   const canvasRef = useRef(null)
+  const cursorRef = useRef(null)
   const tipRef = useRef(null)
   const [width, setWidth] = useState(0)
   const [expanded, setExpanded] = useState(() => new Set())
@@ -49,8 +51,15 @@ export default function LayerHeatmap({
 
   const [x0, x1] = xRange ?? domain ?? [starts[0] ?? 0, starts[starts.length - 1] ?? 1]
   const plotW = Math.max(1, width - labelWidth - plotPadRight)
-  const toPx = (step) => labelWidth + ((step - x0) / Math.max(1e-9, x1 - x0)) * plotW
-  const bucketEnd = (i) => (i + 1 < starts.length ? starts[i + 1] : (domain?.[1] ?? starts[i] + 1))
+  const toPx = useCallback(
+    (step) => labelWidth + ((step - x0) / Math.max(1e-9, x1 - x0)) * plotW,
+    [labelWidth, x0, x1, plotW]
+  )
+  const lastStep = domain?.[1]
+  const bucketEnd = useCallback(
+    (i) => (i + 1 < starts.length ? starts[i + 1] : (lastStep ?? starts[i] + 1)),
+    [starts, lastStep]
+  )
 
   const hasRows = rows.length > 0
   // The canvas wrapper only exists once rows do, so observe it when it appears.
@@ -83,7 +92,6 @@ export default function LayerHeatmap({
     const surface = hexToRgb(readToken('--surface'), [255, 255, 255])
     const heat = hexToRgb(readToken('--heat'), [155, 28, 34])
     const muted = readToken('--muted') || '#6b6b6b'
-    const ink = readToken('--ink') || '#171717'
     const red = readToken('--red') || '#e5484d'
     const font = '11px "Geist Variable", system-ui, sans-serif'
     ctx.font = font
@@ -117,20 +125,14 @@ export default function LayerHeatmap({
     }
     ctx.setLineDash([])
     if (spikeWindow) {
-      const a = Math.max(labelWidth, toPx(spikeWindow.from))
-      const e = Math.min(labelWidth + plotW, toPx(spikeWindow.to))
+      // Same minimum width as the chart bands, so a single-step spike is outlined too.
+      const [sa, se] = bandSpan(toPx(spikeWindow.from), toPx(spikeWindow.to), 3)
+      const a = Math.max(labelWidth, sa)
+      const e = Math.min(labelWidth + plotW, se)
       if (e > a) {
         ctx.strokeStyle = red
         ctx.strokeRect(a + 0.5, 0.5, e - a - 1, bottom - 1)
       }
-    }
-    if (cursorStep != null && cursorStep >= x0 && cursorStep <= x1) {
-      const x = toPx(cursorStep)
-      ctx.strokeStyle = ink
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, bottom)
-      ctx.stroke()
     }
 
     ctx.fillStyle = muted
@@ -140,7 +142,44 @@ export default function LayerHeatmap({
       const step = Math.round(x0 + ((x1 - x0) * i) / (ticks - 1))
       ctx.fillText(String(step), toPx(step), bottom + AXIS / 2 + 2)
     }
-  })
+  }, [
+    rows,
+    width,
+    expanded,
+    starts,
+    toPx,
+    bucketEnd,
+    labelWidth,
+    plotW,
+    warningStep,
+    spikeWindow,
+    x0,
+    x1,
+  ])
+
+  // The shared cursor lives on its own canvas so hovering never repaints every cell.
+  useEffect(() => {
+    const canvas = cursorRef.current
+    if (!canvas || !width || rows.length === 0) return
+    const dpr = window.devicePixelRatio || 1
+    const bottom = rows.length * ROW
+    canvas.width = width * dpr
+    canvas.height = bottom * dpr
+    canvas.style.width = `${width}px`
+    canvas.style.height = `${bottom}px`
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    ctx.clearRect(0, 0, width, bottom)
+    if (cursorStep == null || cursorStep < x0 || cursorStep > x1) return
+    const x = toPx(cursorStep)
+    ctx.strokeStyle = readToken('--ink') || '#171717'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(x, 0)
+    ctx.lineTo(x, bottom)
+    ctx.stroke()
+  }, [cursorStep, width, rows.length, toPx, x0, x1])
 
   if (!matrix) return <p className="px-2 text-sm text-muted">Loading layer metrics</p>
   if (matrix.layers.length === 0) {
@@ -216,6 +255,11 @@ export default function LayerHeatmap({
           onMouseLeave={() => tipRef.current && (tipRef.current.hidden = true)}
           onClick={onClick}
           style={{ cursor: 'pointer', display: 'block' }}
+        />
+        <canvas
+          ref={cursorRef}
+          aria-hidden="true"
+          className="pointer-events-none absolute left-0 top-0"
         />
         <div ref={tipRef} className="chart-tooltip" hidden />
       </div>

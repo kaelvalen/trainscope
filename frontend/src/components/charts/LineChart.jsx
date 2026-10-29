@@ -58,6 +58,8 @@ export default function LineChart(props) {
     const data = [latest.current.x, ...latest.current.series.map((s) => toFinite(s.values))]
     const plot = new uPlot(opts, data, wrapRef.current)
     plotRef.current = plot
+    const range = latest.current.xRange
+    if (range) plot.setScale('x', { min: range[0], max: range[1] })
     const reset = () => latest.current.onResetRange?.()
     plot.over.addEventListener('dblclick', reset)
     return () => {
@@ -67,12 +69,14 @@ export default function LineChart(props) {
     }
   }, [width, height, structure, syncKey])
 
+  const limitKey = JSON.stringify(props.limit ?? null)
   useEffect(() => {
     const plot = plotRef.current
     if (!plot) return
-    plot.setData([x, ...series.map((s) => toFinite(s.values))], !xRange)
+    // Re-range y on every data/clamp change (a live spike sets yMax), then restore the zoom.
+    plot.setData([x, ...series.map((s) => toFinite(s.values))])
     if (xRange) plot.setScale('x', { min: xRange[0], max: xRange[1] })
-  }, [x, series, xRange])
+  }, [x, series, xRange, yMax, limitKey])
 
   useEffect(() => {
     plotRef.current?.redraw(false)

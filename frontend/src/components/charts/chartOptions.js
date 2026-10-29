@@ -22,10 +22,13 @@ export function lossYMax(steps, loss, firstSpike) {
   return Number.isFinite(max) ? max * 1.25 : null
 }
 
-/** Where the line leaves the plot, labelled with the peak it reaches (or the first non-finite point). */
+/**
+ * Where the line leaves the plot, labelled with the peak it reaches (or the
+ * first non-finite point). JSON carries NaN/inf as null, so null counts too.
+ */
 export function offScaleMarker(steps, values, yMax) {
   if (yMax == null) return null
-  const i = values.findIndex((v) => (Number.isFinite(v) ? v > yMax : v != null))
+  const i = values.findIndex((v) => (Number.isFinite(v) ? v > yMax : true))
   if (i < 0) return null
   if (!Number.isFinite(values[i])) return { at: steps[i], text: `non-finite at step ${steps[i]}` }
   let peak = i
@@ -35,10 +38,18 @@ export function offScaleMarker(steps, values, yMax) {
   return { at: steps[i], text: `${values[peak].toFixed(1)} at step ${steps[peak]}, off scale` }
 }
 
+/** A band at least `min` pixels wide, so a single-step spike still shows. */
+export function bandSpan(x0, x1, min) {
+  if (x1 - x0 >= min) return [x0, x1]
+  const mid = (x0 + x1) / 2
+  return [mid - min / 2, mid + min / 2]
+}
+
 function yRange(yMax, limit) {
   return (_u, min, max) => {
     if (min == null || max == null) return [0, yMax ?? 1]
-    if (yMax != null) return [Math.min(min, yMax), yMax]
+    // Zoomed entirely above the clamp (e.g. into a diverged tail): show the data.
+    if (yMax != null && min < yMax) return [min, yMax]
     const limits = [].concat(limit ?? [])
     const top = limits.length ? Math.max(max, ...limits.map((l) => l.value * 1.1)) : max
     const span = top - min || Math.abs(top) || 1
@@ -66,9 +77,15 @@ function drawMarkerLabels(u, markers) {
 function drawBands(u, bands) {
   const { ctx, bbox } = u
   ctx.save()
+  const dpr = window.devicePixelRatio || 1
   for (const band of bands) {
-    const x0 = Math.max(bbox.left, u.valToPos(band.from, 'x', true))
-    const x1 = Math.min(bbox.left + bbox.width, u.valToPos(band.to, 'x', true))
+    const [a, b] = bandSpan(
+      u.valToPos(band.from, 'x', true),
+      u.valToPos(band.to, 'x', true),
+      3 * dpr
+    )
+    const x0 = Math.max(bbox.left, a)
+    const x1 = Math.min(bbox.left + bbox.width, b)
     if (x1 <= x0) continue
     ctx.fillStyle = resolveColor(band.kind === 'spike' ? 'var(--red-band)' : 'var(--warm-band)')
     ctx.fillRect(x0, bbox.top, x1 - x0, bbox.height)
@@ -130,7 +147,7 @@ function drawOverlays(u, { markers = [], limit, offScale }) {
  * markers, limit and off-scale marker so they can change without rebuilding.
  */
 export function buildLineOptions(props, { width }, overlays = () => props) {
-  const { series, height, yMax = null, limit = null, xAxis = true, gutter = 48 } = props
+  const { series, height, xAxis = true, gutter = 48 } = props
   const muted = resolveColor('var(--muted)')
   const grid = resolveColor('var(--border)')
   const axis = {
@@ -144,7 +161,14 @@ export function buildLineOptions(props, { width }, overlays = () => props) {
     height,
     padding: [8, 10, xAxis ? 0 : 4, 0],
     legend: { show: series.length > 1, live: false },
-    scales: { x: { time: false }, y: { range: yRange(yMax, limit) } },
+    scales: {
+      x: { time: false },
+      // Read through overlays() so a spike arriving live re-clamps the axis.
+      y: {
+        range: (u, min, max) =>
+          yRange(overlays().yMax ?? null, overlays().limit ?? null)(u, min, max),
+      },
+    },
     axes: [
       { ...axis, show: xAxis, grid: { show: false }, size: 24 },
       { ...axis, size: gutter, values: (_u, ticks) => ticks.map((t) => +t.toPrecision(3)) },
