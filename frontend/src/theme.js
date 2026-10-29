@@ -25,14 +25,19 @@ export const COLORS = {
  * hard-coding hex values so the theme stays consistent.
  */
 export const CHART_COLORS = {
-  loss: COLORS.accent,
-  gradNorm: COLORS.success,
-  weight: COLORS.purple,
-  kurtosis: COLORS.warning,
-  spike: COLORS.danger,
-  muted: COLORS.muted,
-  diffTop: COLORS.danger,
-  diffRest: COLORS.accent,
+  loss: 'var(--ink)',
+  gradNorm: 'var(--blue)',
+  weight: 'var(--muted)',
+  kurtosis: 'var(--amber)',
+  spike: 'var(--red)',
+  muted: 'var(--muted)',
+  diffTop: 'var(--red)',
+  diffRest: 'var(--blue)',
+}
+
+/** Resolve a CSS custom property to its value; canvas drawing needs real colors. */
+export function readToken(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
 
 export const SPACING = {
