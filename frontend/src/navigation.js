@@ -1,60 +1,26 @@
-import { Activity, FolderKanban, GitCompare, Layers3, Network, RotateCcw, Zap } from 'lucide-react'
-
 export const NAV_ITEMS = [
-  {
-    id: 'runs',
-    label: 'Runs',
-    eyebrow: 'Run overview',
-    description: 'See every run side by side and switch between them.',
-    shortcut: '1',
-    icon: FolderKanban,
-  },
-  {
-    id: 'timeline',
-    label: 'Timeline',
-    eyebrow: 'Run overview',
-    description: 'Follow loss, gradients, and anomaly clusters across the run.',
-    shortcut: '2',
-    icon: Activity,
-  },
-  {
-    id: 'layers',
-    label: 'Layer drill-down',
-    eyebrow: 'Layer signals',
-    description: 'Trace the layer-level metrics behind an unstable update.',
-    shortcut: '3',
-    icon: Layers3,
-  },
-  {
-    id: 'moe',
-    label: 'Routing & addressing',
-    eyebrow: 'MoE / memory',
-    description: 'Per-expert and per-slot routing shares over time.',
-    shortcut: '4',
-    icon: Network,
-  },
-  {
-    id: 'diff',
-    label: 'Diff view',
-    eyebrow: 'State comparison',
-    description: 'Compare weight distributions between any two training steps.',
-    shortcut: '5',
-    icon: GitCompare,
-  },
-  {
-    id: 'spikes',
-    label: 'Spike inspector',
-    eyebrow: 'Anomaly response',
-    description: 'Turn a loss spike into a chronological root-cause story.',
-    shortcut: '6',
-    icon: Zap,
-  },
-  {
-    id: 'replay',
-    label: 'Replay',
-    eyebrow: 'Resume plan',
-    description: 'See which training steps a generated replay plan will skip.',
-    shortcut: '7',
-    icon: RotateCcw,
-  },
+  { id: 'overview', label: 'Overview', shortcut: '1' },
+  { id: 'layers', label: 'Layers', shortcut: '2' },
+  { id: 'spikes', label: 'Spikes', shortcut: '3' },
+  { id: 'routing', label: 'Routing', shortcut: '4' },
+  { id: 'compare', label: 'Compare', shortcut: '5' },
+  { id: 'replay', label: 'Replay', shortcut: '6' },
 ]
+
+// View ids from 1.9.0, kept so existing links still land on the same view.
+export const HASH_ALIASES = { timeline: 'overview', diff: 'compare', moe: 'routing' }
+
+/**
+ * Map a location hash to a view. `#runs` is the runs index (not a tab); an
+ * unknown or hidden tab falls back to the overview. A `?query` after the id
+ * is preserved in the canonical hash but never part of the view name.
+ */
+export function resolveTab(hash, visibleIds) {
+  const raw = (hash || '').replace(/^#/, '')
+  const [id, query] = raw.split('?')
+  const suffix = query ? `?${query}` : ''
+  if (id === 'runs') return { view: 'runs', canonical: '#runs' }
+  const view = HASH_ALIASES[id] ?? id
+  if (visibleIds.includes(view)) return { view, canonical: `#${view}${suffix}` }
+  return { view: 'overview', canonical: '#overview' }
+}

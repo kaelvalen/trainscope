@@ -5,8 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/Card.jsx'
 import useKeyboardShortcuts from '../hooks/useKeyboardShortcuts.js'
 
 const SHORTCUTS = [
-  { keys: ['1', '2', '3', '4'], description: 'Switch views' },
-  { keys: ['←', '→'], description: 'Previous / next view' },
+  { keys: ['1', '…', '6'], description: 'Switch views' },
   { keys: ['?'], description: 'Toggle this help' },
   { keys: ['r'], description: 'Refresh run data' },
 ]
