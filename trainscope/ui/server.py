@@ -21,6 +21,7 @@ from trainscope.analysis import (
     read_arrow_sync,
     run_signal_signature,
 )
+from trainscope.layer_matrix import build_layer_matrix
 from trainscope.ui.auth import auth_enabled, auth_middleware_factory, verify_request
 
 logger = logging.getLogger("trainscope")
@@ -128,6 +129,16 @@ class _TTLCache:
 class DiffParams(BaseModel):
     step_a: int = Field(..., ge=0, description="First step to compare")
     step_b: int = Field(..., ge=0, description="Second step to compare")
+
+
+_MATRIX_METRICS = ("grad_l2_norm", "weight_l2_norm", "grad_max_abs", "act_kurtosis")
+
+
+class MatrixParams(BaseModel):
+    metric: str = "grad_l2_norm"
+    buckets: int = Field(600, ge=1, le=2000)
+    start: int | None = None
+    end: int | None = None
 
 
 class RankedParams(BaseModel):
@@ -891,6 +902,43 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         ranked = [name for name, _ in scored]
         _cache.set("ranked_layers", ranked)
         return ranked[: params.top_n]
+
+    @app.get("/api/layers/matrix")
+    async def get_layer_matrix(params: Annotated[MatrixParams, Depends()]) -> dict[str, Any]:
+        if params.metric not in _MATRIX_METRICS:
+            raise HTTPException(
+                status_code=400, detail=f"metric must be one of {', '.join(_MATRIX_METRICS)}"
+            )
+        layers_dir = rp / "layers"
+        files: list[Path] = []
+        if await anyio.to_thread.run_sync(layers_dir.exists):
+            files = await anyio.to_thread.run_sync(lambda: sorted(layers_dir.glob("*.arrow")))
+        mtime = max((f.stat().st_mtime for f in files), default=0.0)
+        key = f"matrix:{rp}:{params.metric}:{params.buckets}:{params.start}:{params.end}:{mtime}"
+        cached = _cache.get(key)
+        if cached is not None:
+            return cast(dict[str, Any], cached)
+
+        series: dict[str, list[tuple[int, float | None]]] = {}
+        for arrow_file in files:
+            rows = await read_arrow(arrow_file)
+            series[_decode_layer_name(arrow_file.name)] = [
+                (r["step"], r.get(params.metric)) for r in rows if r.get("step") is not None
+            ]
+        spikes = await get_spike_steps(rp)
+        matrix = build_layer_matrix(
+            series,
+            buckets=params.buckets,
+            start=params.start,
+            end=params.end,
+            first_spike=min(spikes) if spikes else None,
+        )
+        _cache.set(key, matrix)
+        return matrix
+
+    @app.get("/api/signals")
+    async def get_signals() -> dict[str, Any]:
+        return await run_signal_signature(rp)
 
     @app.get("/api/layers/{layer_name:path}")
     async def get_layer(layer_name: str) -> list[dict]:
