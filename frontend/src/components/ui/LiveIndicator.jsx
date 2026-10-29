@@ -1,4 +1,3 @@
-import { Badge } from './Badge.jsx'
 import { cn } from '../../utils.js'
 
 export function LiveIndicator({ status, compact = false }) {
@@ -6,15 +5,15 @@ export function LiveIndicator({ status, compact = false }) {
   const isConnecting = status === 'connecting'
 
   return (
-    <Badge
-      variant={isConnected ? 'success' : isConnecting ? 'warning' : 'default'}
-      className={cn('live-indicator', compact && 'live-indicator--compact')}
-    >
+    <span className={cn('inline-flex items-center gap-1.5 text-xs text-muted', compact && 'gap-1')}>
       <span
-        className={cn('live-indicator__dot', isConnected && 'is-connected')}
         aria-hidden="true"
+        className={cn(
+          'h-1.5 w-1.5 rounded-full',
+          isConnected ? 'bg-blue' : isConnecting ? 'bg-amber' : 'bg-subtle'
+        )}
       />
       <span>{isConnected ? 'Live' : isConnecting ? 'Connecting' : 'Offline'}</span>
-    </Badge>
+    </span>
   )
 }

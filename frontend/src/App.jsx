@@ -1,16 +1,15 @@
-import { Suspense, lazy, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import { useRun } from './RunContext.jsx'
 import ErrorMessage from './components/ErrorMessage.jsx'
 import ErrorBoundary from './components/ErrorBoundary.jsx'
-import { Navbar } from './components/ui/Navbar.jsx'
-import { Sidebar } from './components/ui/Sidebar.jsx'
+import { Tabs } from './components/shell/Tabs.jsx'
+import { TopBar } from './components/shell/TopBar.jsx'
 import { Skeleton } from './components/ui/Skeleton.jsx'
-import { PageHeader } from './components/ui/PageHeader.jsx'
 import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js'
-import { NAV_ITEMS } from './navigation.js'
+import { NAV_ITEMS, resolveTab } from './navigation.js'
 
 const Runs = lazy(() => import('./views/Runs.jsx'))
-const Timeline = lazy(() => import('./views/Timeline.jsx'))
+const Overview = lazy(() => import('./views/Timeline.jsx'))
 const LayerDrilldown = lazy(() => import('./views/LayerDrilldown.jsx'))
 const ExpertUtilization = lazy(() => import('./views/ExpertUtilization.jsx'))
 const DiffView = lazy(() => import('./views/DiffView.jsx'))
@@ -19,113 +18,88 @@ const Replay = lazy(() => import('./views/Replay.jsx'))
 
 const VIEW_COMPONENTS = {
   runs: Runs,
-  timeline: Timeline,
+  overview: Overview,
   layers: LayerDrilldown,
-  moe: ExpertUtilization,
-  diff: DiffView,
   spikes: SpikeInspector,
+  routing: ExpertUtilization,
+  compare: DiffView,
   replay: Replay,
 }
 
 function LoadingSkeleton() {
   return (
-    <div className="space-y-6" aria-label="Loading run data">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-32" />
-        ))}
-      </div>
+    <div className="space-y-4" aria-label="Loading run data">
+      <Skeleton className="h-16" />
       <Skeleton className="h-80" />
-      <Skeleton className="h-72" />
+      <Skeleton className="h-56" />
     </div>
   )
 }
 
-// The active view lives in the URL hash so views are linkable and survive reloads.
-const tabFromHash = () =>
-  Math.max(
-    0,
-    NAV_ITEMS.findIndex((item) => `#${item.id}` === window.location.hash)
-  )
-
 export default function App() {
-  const [activeTab, setActiveTab] = useState(tabFromHash)
-  useEffect(() => {
-    window.history.replaceState(null, '', `#${NAV_ITEMS[activeTab].id}`)
-  }, [activeTab])
-  const [mobileOpen, setMobileOpen] = useState(false)
-  const { meta, spikes, spikeEvents, loading, error, refresh, isReady, liveStatus, lastUpdatedAt } =
-    useRun()
-  const activeView = NAV_ITEMS[activeTab] || NAV_ITEMS[0]
-  const ActiveComponent = VIEW_COMPONENTS[activeView.id]
+  const { meta, moeData, runs, switchRun, loading, error, refresh, isReady, liveStatus } = useRun()
 
-  useKeyboardShortcuts(
-    {
-      1: () => setActiveTab(0),
-      2: () => setActiveTab(1),
-      3: () => setActiveTab(2),
-      4: () => setActiveTab(3),
-      5: () => setActiveTab(4),
-      6: () => setActiveTab(5),
-      7: () => setActiveTab(6),
-      ArrowLeft: () => setActiveTab((i) => Math.max(0, i - 1)),
-      ArrowRight: () => setActiveTab((i) => Math.min(NAV_ITEMS.length - 1, i + 1)),
-      r: () => refresh(),
-    },
-    [refresh]
+  const visible = useMemo(
+    () =>
+      NAV_ITEMS.filter(
+        (item) =>
+          (item.id !== 'routing' || (moeData?.length ?? 0) > 0) &&
+          (item.id !== 'compare' || (runs?.length ?? 0) > 1)
+      ),
+    [moeData, runs]
   )
+  const visibleIds = visible.map((item) => item.id)
+  const [hash, setHash] = useState(() => window.location.hash)
+  const { view, canonical } = resolveTab(hash, visibleIds)
+
+  useEffect(() => {
+    const onHash = () => setHash(window.location.hash)
+    window.addEventListener('hashchange', onHash)
+    return () => window.removeEventListener('hashchange', onHash)
+  }, [])
+
+  // Tabs like Routing only become visible once run data arrives; don't rewrite deep links before then.
+  useEffect(() => {
+    if (isReady && window.location.hash !== canonical) {
+      window.history.replaceState(null, '', canonical)
+    }
+  }, [canonical, isReady])
+
+  const go = useCallback((id) => {
+    window.history.pushState(null, '', `#${id}`)
+    setHash(`#${id}`)
+  }, [])
+
+  const shortcuts = Object.fromEntries(visible.map((item, i) => [String(i + 1), () => go(item.id)]))
+  useKeyboardShortcuts({ ...shortcuts, r: () => refresh() }, [visibleIds.join(','), refresh, go])
+
+  const ActiveComponent = VIEW_COMPONENTS[view]
 
   return (
-    <div className="app-shell text-foreground">
-      <Sidebar
-        activeIndex={activeTab}
-        onChange={setActiveTab}
-        mobileOpen={mobileOpen}
-        onClose={() => setMobileOpen(false)}
-        liveStatus={liveStatus}
+    <div className="min-h-screen bg-page text-ink">
+      <TopBar
         runName={meta?.trainscope_config?.run_name}
+        runs={runs}
+        switchRun={(name) => {
+          switchRun(name)
+          go('overview')
+        }}
+        liveStatus={liveStatus}
+        onOpenRuns={() => go('runs')}
       />
+      <Tabs items={visible} active={view} onSelect={go} />
 
-      <div className="app-main">
-        <Navbar
-          runName={meta?.trainscope_config?.run_name}
-          spikeCount={spikes.length}
-          spikeEvents={spikeEvents}
-          liveStatus={liveStatus}
-          onMenuClick={() => setMobileOpen(true)}
-          onRefresh={refresh}
-          refreshing={loading}
-          sectionLabel={activeView.label}
-          lastUpdatedAt={lastUpdatedAt}
-        />
-
-        <main className="app-content" aria-busy={loading}>
-          <div className="content-container">
-            <PageHeader
-              eyebrow={activeView.eyebrow}
-              title={activeView.label}
-              description={activeView.description}
-              icon={activeView.icon}
-            />
-            {loading && <LoadingSkeleton />}
-            {!loading && error && <ErrorMessage message={error} onRetry={refresh} />}
-            {!loading && !error && isReady && (
-              <ErrorBoundary>
-                <Suspense
-                  fallback={
-                    <div className="space-y-4">
-                      <Skeleton className="h-40" />
-                      <Skeleton className="h-80" />
-                    </div>
-                  }
-                >
-                  <ActiveComponent />
-                </Suspense>
-              </ErrorBoundary>
-            )}
-          </div>
-        </main>
-      </div>
+      <main className="mx-auto max-w-[1360px] px-4 py-6 sm:px-8 sm:py-8" aria-busy={loading}>
+        {loading && <LoadingSkeleton />}
+        {!loading && error && <ErrorMessage message={error} onRetry={refresh} />}
+        {!loading && !error && isReady && (
+          <ErrorBoundary>
+            <Suspense fallback={<LoadingSkeleton />}>
+              <ActiveComponent />
+            </Suspense>
+          </ErrorBoundary>
+        )}
+      </main>
     </div>
   )
 }
