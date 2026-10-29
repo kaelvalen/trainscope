@@ -26,6 +26,10 @@ export default function LineChart(props) {
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return undefined
+    if (typeof ResizeObserver === 'undefined') {
+      setWidth(el.clientWidth)
+      return undefined
+    }
     const ro = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)))
     ro.observe(el)
     return () => ro.disconnect()
