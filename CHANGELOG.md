@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.10.0] - New UI
 
 ### Changed
 - **New UI.** The dark sidebar dashboard is replaced by a light, Vercel/Linear-style shell: a top bar with a run switcher in the breadcrumb, and tabs (Overview, Layers, Spikes, Routing, Compare, Replay). Dark mode follows the system setting from its own validated token set. Geist is self-hosted; the UI makes no font or script requests to the network.
