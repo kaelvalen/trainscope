@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **New UI.** The dark sidebar dashboard is replaced by a light, Vercel/Linear-style shell: a top bar with a run switcher in the breadcrumb, and tabs (Overview, Layers, Spikes, Routing, Compare, Replay). Dark mode follows the system setting from its own validated token set. Geist is self-hosted; the UI makes no font or script requests to the network.
+- **Overview replaces Timeline.** Run status (training, stable, spiked, diverged), a one-row stat strip, loss and grad norm on a shared step axis with warmup and spike bands, a first-warning marker and an off-scale marker so one explosion no longer flattens the pre-spike history, a canvas layer × step heatmap (robust z of each layer's grad norm against its own pre-spike baseline, grouped by block past 24 tensors, sortable by first crossing), and the signals that crossed before the spike with their lead.
+- **Charts moved from Plotly to uPlot.** Built JS is 277,915 bytes (96,908 gzipped) against 5,102,693 (1,536,637 gzipped) on 1.9.0, measured from the Vite output. The dual-axis spike chart is split into two charts on one cursor; categorical series use a fixed 7-hue palette validated for color-vision deficiency in both themes, with red reserved for spikes.
+- Hash links from 1.9.0 (`#timeline`, `#diff`, `#moe`, `#runs`) still open the matching view.
+
+### Added
+- `GET /api/layers/matrix` (per-layer bucketed metric and robust z for the heatmap) and `GET /api/signals` (the run's early-warning signal signature). Both are internal UI endpoints, like the rest of `/api/*`.
+
 ## [1.9.0] - Framework Integrations & GPU Overhead
 
 ### Added
