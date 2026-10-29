@@ -1,0 +1,58 @@
+/* Design tokens. Color carries meaning only: spike (red), warning (amber),
+   series identity (ink, blue). Dark is its own set of steps, not an inversion. */
+:root {
+  color-scheme: light;
+  --page: #fafafa;
+  --surface: #ffffff;
+  --border: #eaeaea;
+  --border-strong: #d4d4d4;
+  --ink: #171717;
+  --muted: #6b6b6b;
+  --subtle: #a3a3a3;
+  --red: #e5484d;
+  --red-band: rgba(229, 72, 77, 0.1);
+  --warm-band: rgba(0, 0, 0, 0.035);
+  --blue: #0a6cff;
+  --amber: #c2850c;
+  --heat: #9b1c22;
+  /* Categorical series, fixed order (validated; red is reserved for spikes). */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+  --series-7: #6250d6;
+  --hover: #f4f4f4;
+  --focus: #0a6cff;
+  --radius-panel: 10px;
+  --radius-control: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --page: #0a0a0a;
+    --surface: #141414;
+    --border: #262626;
+    --border-strong: #3a3a3a;
+    --ink: #ededed;
+    --muted: #a1a1a1;
+    --subtle: #6e6e6e;
+    --red: #f2555a;
+    --red-band: rgba(242, 85, 90, 0.16);
+    --warm-band: rgba(255, 255, 255, 0.04);
+    --blue: #3b8bff;
+    --amber: #e0a72e;
+    --heat: #ff5c61;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+    --series-7: #9085e9;
+    --hover: #1c1c1c;
+    --focus: #3b8bff;
+  }
+}

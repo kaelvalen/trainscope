@@ -102,9 +102,10 @@ async def run_signal_signature(run_dir: Path) -> dict[str, Any]:
     if global_rows:
         grad_norms = [r.get("grad_norm_before_clip") for r in global_rows]
         if any(v is not None for v in grad_norms):
-            step = first_crossing_step([v or 0.0 for v in grad_norms])
-            if step is not None:
-                fired["grad_norm"] = step
+            # first_crossing_step returns a row index; report the training step.
+            idx = first_crossing_step([v or 0.0 for v in grad_norms])
+            if idx is not None:
+                fired["grad_norm"] = int(global_rows[idx].get("step", idx))
 
         # Loss signal: a spike recorded by the detector (or a 10x loss jump in
         # the last row, which is what the objective explosion definition uses
@@ -124,6 +125,7 @@ async def run_signal_signature(run_dir: Path) -> dict[str, Any]:
 
     # Kurtosis from layer arrows (act_kurtosis, when recorded).
     kurtosis_values: list[float] = []
+    kurtosis_steps: list[int] = []
     layers_dir = run_dir / "layers"
     if await anyio.to_thread.run_sync(layers_dir.exists):
         files = await anyio.to_thread.run_sync(lambda: sorted(layers_dir.glob("*.arrow"))[:5])
@@ -132,11 +134,12 @@ async def run_signal_signature(run_dir: Path) -> dict[str, Any]:
             values = [r.get("act_kurtosis") for r in rows]
             if any(v is not None for v in values):
                 kurtosis_values = [v or 0.0 for v in values]
+                kurtosis_steps = [int(r.get("step", i)) for i, r in enumerate(rows)]
                 break
     if kurtosis_values:
-        step = first_crossing_step(kurtosis_values)
-        if step is not None:
-            fired["kurtosis"] = step
+        idx = first_crossing_step(kurtosis_values)
+        if idx is not None:
+            fired["kurtosis"] = kurtosis_steps[idx]
 
     # Concentration from moe.arrow.
     moe_rows = await read_arrow(run_dir / "moe.arrow")
@@ -147,10 +150,11 @@ async def run_signal_signature(run_dir: Path) -> dict[str, Any]:
             step = row.get("step")
             if shares and step is not None:
                 by_step[step] = max(by_step.get(step, 0.0), max(shares))
-        concentration_values = [by_step[s] for s in sorted(by_step)]
-        step = first_crossing_step(concentration_values)
-        if step is not None:
-            fired["concentration"] = step
+        concentration_steps = sorted(by_step)
+        concentration_values = [by_step[s] for s in concentration_steps]
+        idx = first_crossing_step(concentration_values)
+        if idx is not None:
+            fired["concentration"] = concentration_steps[idx]
 
     # Chronological order: earliest crossing step first.
     fired_names = sorted(fired, key=lambda name: fired[name])

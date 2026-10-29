@@ -4,7 +4,7 @@ export default function StepScrubber({
   steps,
   value,
   onChange,
-  label = 'Step scrubber:',
+  label = 'Step',
   showValue = true,
   id = 'step-scrubber',
 }) {
@@ -28,19 +28,19 @@ export default function StepScrubber({
   }
 
   return (
-    <div className="scrubber">
-      <div className="scrubber__meta">
-        <label htmlFor={id} className="scrubber__label">
+    <div className="rounded-panel border border-border bg-surface px-4 py-3">
+      <div className="flex items-center justify-between gap-3 text-sm">
+        <label htmlFor={id} className="text-muted">
           {label}
         </label>
         <div className="flex items-center gap-3">
-          <span className="scrubber__range">
-            {min} → {max}
+          <span className="text-xs text-muted">
+            {min}–{max}
           </span>
-          {showValue && <span className="scrubber__value">Step {value ?? min}</span>}
+          {showValue && <span className="font-medium">Step {value ?? min}</span>}
         </div>
       </div>
-      <div className="scrubber__track">
+      <div className="mt-2">
         <input
           id={id}
           type="range"
@@ -51,6 +51,7 @@ export default function StepScrubber({
           onChange={handleChange}
           list={`${id}-ticks`}
           aria-label={label}
+          className="h-10 w-full cursor-pointer accent-[var(--ink)]"
         />
         <datalist id={`${id}-ticks`}>
           {steps.map((s) => (
