@@ -39,7 +39,8 @@ function yRange(yMax, limit) {
   return (_u, min, max) => {
     if (min == null || max == null) return [0, yMax ?? 1]
     if (yMax != null) return [Math.min(min, yMax), yMax]
-    const top = limit != null ? Math.max(max, limit.value * 1.1) : max
+    const limits = [].concat(limit ?? [])
+    const top = limits.length ? Math.max(max, ...limits.map((l) => l.value * 1.1)) : max
     const span = top - min || Math.abs(top) || 1
     return [min - span * 0.05, top + span * 0.05]
   }
@@ -90,8 +91,8 @@ function drawOverlays(u, { markers = [], limit, offScale }) {
   ctx.save()
   ctx.font = FONT.replace('11px', `${11 * dpr}px`)
   ctx.lineWidth = dpr
-  if (limit) {
-    const y = u.valToPos(limit.value, 'y', true)
+  for (const l of [].concat(limit ?? [])) {
+    const y = u.valToPos(l.value, 'y', true)
     ctx.strokeStyle = resolveColor('var(--subtle)')
     ctx.setLineDash([4 * dpr, 3 * dpr])
     ctx.beginPath()
@@ -142,7 +143,7 @@ export function buildLineOptions(props, { width }, overlays = () => props) {
     width,
     height,
     padding: [8, 10, xAxis ? 0 : 4, 0],
-    legend: { show: series.length > 1 },
+    legend: { show: series.length > 1, live: false },
     scales: { x: { time: false }, y: { range: yRange(yMax, limit) } },
     axes: [
       { ...axis, show: xAxis, grid: { show: false }, size: 24 },

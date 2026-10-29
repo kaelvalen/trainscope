@@ -86,3 +86,7 @@
   border-color: var(--ink);
   color: var(--ink);
 }
+
+.line-chart .u-legend .u-label {
+  font-weight: 400;
+}

@@ -75,7 +75,7 @@ describe('Runs view', () => {
     delete globalThis.fetch
   })
 
-  it('lists every run with model, spike count and last loss', async () => {
+  it('lists every run in a table with status, steps and last loss', async () => {
     render(
       <ToastProvider>
         <RunProvider>
@@ -84,16 +84,16 @@ describe('Runs view', () => {
       </ToastProvider>
     )
 
-    await waitFor(() => expect(screen.getByText('run_a')).toBeInTheDocument())
-    expect(screen.getByText('run_b')).toBeInTheDocument()
-    // Model + detector info is a composite text node per run row.
-    expect(screen.getByText(/MiniGPT · changepoint detector/)).toBeInTheDocument()
-    expect(screen.getByText(/MiniGPT · z_score detector/)).toBeInTheDocument()
-    // Last loss appears in each row (and again in the summary stat card).
-    expect(screen.getAllByText('3.2000').length).toBeGreaterThanOrEqual(1)
-    expect(screen.getAllByText('2.1000').length).toBeGreaterThanOrEqual(1)
-    // Spike counts render per row.
-    expect(screen.getByText('2 spikes')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'run_a' })).toBeInTheDocument())
+    for (const header of ['Run', 'Status', 'Steps', 'Last loss', 'Cluster']) {
+      expect(screen.getByRole('columnheader', { name: header })).toBeInTheDocument()
+    }
+    expect(screen.getByText('MiniGPT, changepoint detector')).toBeInTheDocument()
+    expect(screen.getByText('Spiked')).toBeInTheDocument()
+    expect(screen.getByText('Stable')).toBeInTheDocument()
+    expect(screen.getByText('150')).toBeInTheDocument()
+    expect(screen.getByText('3.2')).toBeInTheDocument()
+    expect(screen.getByText('2.1')).toBeInTheDocument()
   })
 
   it('switches to the selected run via POST /api/runs/select', async () => {
@@ -127,9 +127,8 @@ describe('Runs view', () => {
       </ToastProvider>
     )
 
-    await waitFor(() => expect(screen.getByText('run_b')).toBeInTheDocument())
-    const openButtons = screen.getAllByRole('button', { name: 'Open' })
-    fireEvent.click(openButtons[0]) // newest run (run_b) sorts first
+    await waitFor(() => expect(screen.getByRole('button', { name: 'run_b' })).toBeInTheDocument())
+    fireEvent.click(screen.getByRole('button', { name: 'run_b' }))
     await waitFor(() => expect(selectBody).toEqual({ name: 'run_b' }))
   })
 
@@ -290,7 +289,7 @@ describe('Runs view clusters', () => {
         </RunProvider>
       </ToastProvider>
     )
-    await waitFor(() => expect(screen.getByText('gradient-led')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('gradient-led').length).toBeGreaterThan(0))
     expect(
       screen.getByText((content) => content.includes('Run behavior clusters'))
     ).toBeInTheDocument()
@@ -310,11 +309,9 @@ describe('Runs view clusters', () => {
         </RunProvider>
       </ToastProvider>
     )
-    await waitFor(() => expect(screen.getByText('gradient-led')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getAllByText('gradient-led').length).toBeGreaterThan(0))
     fireEvent.click(screen.getByRole('button', { name: /Why this.*vs\. stable/i }))
-    await waitFor(() =>
-      expect(screen.getByText(/Why run_a vs\. run_c/i)).toBeInTheDocument()
-    )
+    await waitFor(() => expect(screen.getByText(/Why run_a vs\. run_c/i)).toBeInTheDocument())
     expect(screen.getByText(/First signal: grad_norm at step 40/i)).toBeInTheDocument()
     expect(screen.getByText('model.lr')).toBeInTheDocument()
     expect(screen.getByText('0.0005')).toBeInTheDocument()

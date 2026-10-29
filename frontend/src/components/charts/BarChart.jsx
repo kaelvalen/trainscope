@@ -14,6 +14,10 @@ export default function BarChart({ x, series, height = 220, ariaLabel, gutter = 
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return undefined
+    if (typeof ResizeObserver === 'undefined') {
+      setWidth(el.clientWidth)
+      return undefined
+    }
     const ro = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)))
     ro.observe(el)
     return () => ro.disconnect()
@@ -33,7 +37,7 @@ export default function BarChart({ x, series, height = 220, ariaLabel, gutter = 
         width,
         height,
         padding: [8, 10, 0, 0],
-        legend: { show: series.length > 1 },
+        legend: { show: series.length > 1, live: false },
         cursor: { drag: { x: false, y: false }, points: { show: false } },
         scales: { x: { time: false, range: (_u, min, max) => [min - 0.5, max + 0.5] } },
         axes: [

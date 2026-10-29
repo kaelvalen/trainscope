@@ -35,6 +35,13 @@ export const CHART_COLORS = {
   diffRest: 'var(--blue)',
 }
 
+/**
+ * Categorical series colors, in fixed order (never cycled): extra series past
+ * the end share --subtle and are told apart by the legend.
+ */
+export const SERIES_COLORS = ['var(--ink)', 'var(--blue)', 'var(--amber)', 'var(--muted)']
+export const seriesColor = (i) => SERIES_COLORS[i] ?? 'var(--subtle)'
+
 /** Resolve a CSS custom property to its value; canvas drawing needs real colors. */
 export function readToken(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
