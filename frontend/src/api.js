@@ -161,6 +161,22 @@ export async function fetchLayersRanked(topN = 8) {
   return request(`/layers/ranked?top_n=${topN}`)
 }
 
+export async function fetchLayerMatrix({
+  metric = 'grad_l2_norm',
+  buckets = 600,
+  start,
+  end,
+} = {}) {
+  const params = new URLSearchParams({ metric, buckets: String(buckets) })
+  if (start != null) params.set('start', String(start))
+  if (end != null) params.set('end', String(end))
+  return request(`/layers/matrix?${params}`)
+}
+
+export async function fetchSignals() {
+  return request('/signals')
+}
+
 export async function fetchLayer(name) {
   if (!name) throw new ApiError('Layer name is required')
   return request(`/layers/${encodeURIComponent(name)}`)

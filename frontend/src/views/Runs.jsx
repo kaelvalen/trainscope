@@ -1,34 +1,29 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useRun } from '../RunContext.jsx'
-import EmptyState from '../components/EmptyState.jsx'
-import { Badge } from '../components/ui/Badge.jsx'
-import { StatCard } from '../components/ui/StatCard.jsx'
 import { Button } from '../components/ui/Button.jsx'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.jsx'
-import { ChartCard } from '../components/ui/ChartCard.jsx'
+import { Panel } from '../components/ui/Panel.jsx'
+import { StatStrip } from '../components/ui/StatStrip.jsx'
+import { StatusDot } from '../components/ui/StatusDot.jsx'
 import { Skeleton } from '../components/ui/Skeleton.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
-import Chart from '../components/Chart.jsx'
-import { FolderKanban, GitCompare, Layers, TrendingUp, Zap } from 'lucide-react'
-import { cn } from '../utils.js'
+import LineChart from '../components/charts/LineChart.jsx'
+import { seriesColor } from '../theme.js'
 import { fetchCompare, fetchClusters, fetchCounterexample } from '../api.js'
 
-function formatTime(iso) {
-  if (!iso) return '—'
-  try {
-    return new Date(iso).toLocaleString()
-  } catch {
-    return iso
-  }
+const fmt = (v) => (v == null ? '—' : Number.isFinite(v) ? String(+v.toPrecision(4)) : 'non-finite')
+
+/** Summaries carry no per-step data, so the index can only tell spiked from stable. */
+function summaryStatus(run) {
+  // NaN/inf arrive as null, so the server flags them in last_loss_finite.
+  if (run.last_loss_finite === false) return ['diverged', 'Diverged']
+  if ((run.spike_count ?? 0) > 0) return ['spiked', 'Spiked']
+  return ['stable', 'Stable']
 }
 
-function formatLoss(value) {
-  if (value == null || !Number.isFinite(value)) return '—'
-  if (value >= 1000) return value.toExponential(2)
-  return value.toFixed(4)
-}
-
-const RUN_PALETTE = ['#4ade80', '#60a5fa', '#fbbf24', '#f472b6', '#a78bfa', '#34d399']
+const series = (points = [], key = 'loss') => ({
+  x: points.map((p) => p.step),
+  y: points.map((p) => p[key]),
+})
 
 export default function Runs() {
   const { runs, loading, error, switchRun, activeRunName } = useRun()
@@ -45,12 +40,8 @@ export default function Runs() {
   useEffect(() => {
     let cancelled = false
     fetchClusters()
-      .then((data) => {
-        if (!cancelled) setClusters(data)
-      })
-      .catch((err) => {
-        if (!cancelled) setClusterError(err?.message || 'Failed to cluster runs.')
-      })
+      .then((data) => !cancelled && setClusters(data))
+      .catch((err) => !cancelled && setClusterError(err?.message || 'Failed to cluster runs.'))
     return () => {
       cancelled = true
     }
@@ -60,6 +51,14 @@ export default function Runs() {
     () => [...runs].sort((a, b) => (b.start_time ?? '').localeCompare(a.start_time ?? '')),
     [runs]
   )
+  const clusterOf = useMemo(() => {
+    const map = {}
+    for (const cluster of clusters?.clusters ?? []) {
+      for (const name of cluster.runs) map[name] = cluster.label
+    }
+    for (const name of clusters?.unclustered ?? []) map[name] = 'no signal'
+    return map
+  }, [clusters])
 
   useEffect(() => {
     setSelected((prev) => prev.filter((name) => runs.some((r) => r.name === name)))
@@ -76,8 +75,7 @@ export default function Runs() {
     setComparing(true)
     setCompareError(null)
     try {
-      const data = await fetchCompare(selected)
-      setCompareData(data)
+      setCompareData(await fetchCompare(selected))
     } catch (err) {
       setCompareError(err?.message || 'Failed to compare runs.')
     } finally {
@@ -89,8 +87,7 @@ export default function Runs() {
     setCounterexampleLoading(true)
     setCounterexampleError(null)
     try {
-      const data = await fetchCounterexample(runName)
-      setCounterexample(data)
+      setCounterexample(await fetchCounterexample(runName))
     } catch (err) {
       setCounterexampleError(err?.message || 'Failed to find a counterexample run.')
     } finally {
@@ -98,344 +95,268 @@ export default function Runs() {
     }
   }
 
+  const open = (name) => {
+    switchRun(name)
+    window.location.hash = '#overview'
+  }
+
   if (loading) {
     return (
-      <div className="space-y-4">
-        <Skeleton className="h-16" />
-        <Skeleton className="h-16" />
-        <Skeleton className="h-16" />
+      <div className="space-y-3">
+        <Skeleton className="h-12" />
+        <Skeleton className="h-64" />
       </div>
     )
   }
-
-  if (error) {
-    return <p className="text-sm text-danger">Failed to load runs: {error}</p>
-  }
-
+  if (error) return <ErrorMessage message={`Failed to load runs: ${error}`} />
   if (sortedRuns.length === 0) {
     return (
-      <EmptyState icon={<FolderKanban className="h-5 w-5" />}>
-        No runs found in this directory.
-      </EmptyState>
+      <div className="rounded-panel border border-border bg-surface px-6 py-10">
+        <p>No runs in this directory yet</p>
+        <p className="mt-1 text-sm text-muted">
+          Point <code>trainscope ui</code> at a directory of runs, or try{' '}
+          <code>trainscope demo</code>.
+        </p>
+      </div>
     )
   }
 
+  const spiked = sortedRuns.filter((r) => (r.spike_count ?? 0) > 0).length
+
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Runs" value={sortedRuns.length} icon={FolderKanban} />
-        <StatCard
-          label="Runs with spikes"
-          value={sortedRuns.filter((r) => r.spike_count > 0).length}
-          icon={Zap}
-        />
-        <StatCard
-          label="Latest loss (last run)"
-          value={formatLoss(sortedRuns[0]?.last_loss)}
-          icon={TrendingUp}
-        />
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Runs</h1>
+        <p className="mt-1 text-sm text-muted">
+          {sortedRuns.length} runs in this directory, {spiked} with spikes
+        </p>
       </div>
 
-      {clusterError && <ErrorMessage message={clusterError} />}
-
-      {clusters && clusters.clusters?.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <span className="metric-card__icon" aria-hidden="true">
-                <Layers className="h-3.5 w-3.5" />
-              </span>
-              Run behavior clusters
-            </CardTitle>
-            <p className="chart-card__description">
-              Runs grouped by which early-warning signal fired first. The typical lead is the median
-              time between that signal&apos;s first crossing and the loss explosion, across the
-              cluster&apos;s runs.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {clusters.clusters.map((cluster) => (
-              <div
-                key={cluster.label}
-                className="rounded-lg border border-border bg-background p-3"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="accent">{cluster.label}</Badge>
-                    <span className="text-xs text-muted">{cluster.n_runs} runs</span>
-                    {cluster.typical_lead_steps != null && (
-                      <Badge variant="warning">~{cluster.typical_lead_steps}-step lead</Badge>
-                    )}
-                    {cluster.discriminant_traits?.map((trait) => (
-                      <Badge key={trait.field} variant="danger">
-                        distinct: {trait.field}={trait.value}
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {cluster.fired_signals.map((signal) => (
-                      <Badge key={signal} variant="muted">
-                        {signal}
-                      </Badge>
-                    ))}
-                  </div>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {cluster.runs.map((name) => (
-                    <Button
-                      key={name}
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => switchRun(name)}
-                      className={cn(
-                        'font-mono text-xs',
-                        name === activeRunName && 'border border-accent/60 text-accent'
-                      )}
-                    >
-                      {name}
-                    </Button>
-                  ))}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    disabled={counterexampleLoading}
-                    onClick={() => handleCounterexample(cluster.runs[0])}
-                    className="ml-auto text-xs"
-                  >
-                    {counterexampleLoading ? 'Finding…' : 'Why this & vs. stable'}
-                  </Button>
-                </div>
-                {cluster.loss_band?.steps?.length > 0 && (
-                  <div className="mt-3">
-                    <Chart
-                      data={[
-                        {
-                          x: cluster.loss_band.steps,
-                          y: cluster.loss_band.median,
-                          name: 'median',
-                          line: { color: '#38bdf8', width: 2 },
-                          mode: 'lines',
-                        },
-                        {
-                          x: cluster.loss_band.steps,
-                          y: cluster.loss_band.upper,
-                          name: 'IQR',
-                          fill: 'tonexty',
-                          fillcolor: 'rgba(56,189,248,0.15)',
-                          line: { width: 0 },
-                          mode: 'lines',
-                          hoverinfo: 'skip',
-                        },
-                        {
-                          x: cluster.loss_band.steps,
-                          y: cluster.loss_band.lower,
-                          name: 'IQR lower',
-                          fill: 'tonexty',
-                          fillcolor: 'rgba(56,189,248,0.15)',
-                          line: { width: 0 },
-                          mode: 'lines',
-                          hoverinfo: 'skip',
-                        },
-                      ]}
-                      layout={{
-                        height: 120,
-                        margin: { l: 38, r: 8, t: 8, b: 24 },
-                        showlegend: false,
-                        yaxis: { title: { text: 'norm. loss' }, tickfont: { size: 9 } },
-                        xaxis: { title: { text: 'step' }, tickfont: { size: 9 } },
-                      }}
-                      config={{ displayModeBar: false }}
+      <Panel
+        title="All runs"
+        bodyClassName="overflow-x-auto"
+        actions={
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={handleCompare}
+            disabled={selected.length < 2 || comparing}
+          >
+            {comparing ? 'Comparing…' : `Compare (${selected.length})`}
+          </Button>
+        }
+      >
+        <table className="w-full min-w-[640px] text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="w-10 px-4 py-2 font-normal">
+                <span className="sr-only">Select</span>
+              </th>
+              <th className="py-2 pr-4 font-normal">Run</th>
+              <th className="py-2 pr-4 font-normal">Status</th>
+              <th className="py-2 pr-4 text-right font-normal">Steps</th>
+              <th className="py-2 pr-4 text-right font-normal">Last loss</th>
+              <th className="py-2 pr-4 font-normal">Cluster</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sortedRuns.map((run) => {
+              const [kind, word] = summaryStatus(run)
+              const isActive = run.is_active || run.name === activeRunName
+              return (
+                <tr key={run.name} className="border-t border-border hover:bg-hover">
+                  <td className="px-4 py-2.5">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-[var(--ink)]"
+                      checked={selected.includes(run.name)}
+                      onChange={() => toggleSelect(run.name)}
+                      aria-label={`Select run ${run.name}`}
                     />
-                  </div>
-                )}
-                {cluster.crossing_steps?.length > 0 && (
-                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                    <span className="text-xs text-muted">first signal at</span>
-                    {cluster.crossing_steps.map((step, i) => (
-                      <Badge key={`${step}-${i}`} variant="muted">
-                        step {step}
-                      </Badge>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-            {clusters.unclustered?.length > 0 && (
-              <p className="text-xs text-muted">
-                {clusters.unclustered.length} stable run(s), no early-warning signal fired:{' '}
-                {clusters.unclustered.join(', ')}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
+                  </td>
+                  <td className="py-2.5 pr-4">
+                    <button
+                      type="button"
+                      onClick={() => open(run.name)}
+                      className="font-medium text-ink hover:underline"
+                    >
+                      {run.name}
+                    </button>
+                    {isActive && <span className="ml-2 text-xs text-muted">current</span>}
+                    <div className="text-xs text-muted">
+                      {[run.model_name, run.detector?.name && `${run.detector.name} detector`]
+                        .filter(Boolean)
+                        .join(', ')}
+                    </div>
+                  </td>
+                  <td className="py-2.5 pr-4">
+                    <span className="flex items-center gap-2">
+                      <StatusDot kind={kind} />
+                      {word}
+                      {(run.spike_count ?? 0) > 0 && (
+                        <span className="text-xs text-muted">
+                          {run.spike_count} {run.spike_count === 1 ? 'spike' : 'spikes'}
+                        </span>
+                      )}
+                    </span>
+                  </td>
+                  <td className="py-2.5 pr-4 text-right">{run.n_global_rows ?? '—'}</td>
+                  <td className="py-2.5 pr-4 text-right">{fmt(run.last_loss)}</td>
+                  <td className="py-2.5 pr-4 text-muted">{clusterOf[run.name] ?? '—'}</td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </Panel>
 
-      {counterexampleError && <ErrorMessage message={counterexampleError} />}
+      <ErrorMessage message={compareError} onRetry={handleCompare} />
+      {compareData && <ComparePanel data={compareData} />}
 
-      {counterexample && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <span className="metric-card__icon" aria-hidden="true">
-                <GitCompare className="h-3.5 w-3.5" />
-              </span>
-              Why {counterexample.query_run} vs. {counterexample.counterexample_run}
-            </CardTitle>
-            <p className="chart-card__description">
-              The nearest stable run by config distance ({counterexample.config_distance}).{' '}
-              {counterexample.first_signal
-                ? `First signal: ${counterexample.first_signal} at step ${counterexample.crossing_step}.`
-                : 'No early-warning signal fired in the query run.'}
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <Chart
-              data={[
-                {
-                  x: (counterexample.loss_series?.[counterexample.query_run] ?? []).map(
-                    (p) => p.step
-                  ),
-                  y: (counterexample.loss_series?.[counterexample.query_run] ?? []).map(
-                    (p) => p.loss
-                  ),
-                  name: counterexample.query_run,
-                  line: { color: '#f87171', width: 2 },
-                  mode: 'lines',
-                },
-                {
-                  x: (counterexample.loss_series?.[counterexample.counterexample_run] ?? []).map(
-                    (p) => p.step
-                  ),
-                  y: (counterexample.loss_series?.[counterexample.counterexample_run] ?? []).map(
-                    (p) => p.loss
-                  ),
-                  name: counterexample.counterexample_run,
-                  line: { color: '#4ade80', width: 2 },
-                  mode: 'lines',
-                },
-              ]}
-              layout={{
-                height: 260,
-                margin: { l: 52, r: 12, t: 8, b: 36 },
-                yaxis: { title: { text: 'loss' } },
-                xaxis: { title: { text: 'step' } },
-              }}
-            />
-            {counterexample.config_diff?.length > 0 && (
-              <div className="space-y-1.5">
-                <p className="text-xs font-medium text-muted">
-                  Config fields that differ between the pair:
-                </p>
-                {counterexample.config_diff.map((entry) => (
-                  <div
-                    key={entry.field}
-                    className="flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background px-3 py-2 font-mono text-xs"
-                  >
-                    <span className="text-muted">{entry.field}</span>
-                    <span className="text-danger">{String(entry.query_value)}</span>
-                    <span className="text-muted">vs.</span>
-                    <span className="text-success">{String(entry.stable_value)}</span>
-                  </div>
+      {clusterError && <ErrorMessage message={clusterError} />}
+      {clusters?.clusters?.length > 0 && (
+        <Panel title="Run behavior clusters" bodyClassName="p-0">
+          <p className="px-4 pt-3 text-sm text-muted">
+            Runs grouped by which early-warning signal fired first. The typical lead is the median
+            time between that signal&apos;s first crossing and the loss explosion.
+          </p>
+          {clusters.clusters.map((cluster) => (
+            <div
+              key={cluster.label}
+              className="border-t border-border px-4 py-3 first-of-type:mt-3"
+            >
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <span className="font-medium">{cluster.label}</span>
+                <span className="text-xs text-muted">{cluster.n_runs} runs</span>
+                {cluster.typical_lead_steps != null && (
+                  <span className="text-xs text-red">~{cluster.typical_lead_steps}-step lead</span>
+                )}
+                {cluster.discriminant_traits?.map((trait) => (
+                  <span key={trait.field} className="text-xs text-muted">
+                    distinct: {trait.field}={trait.value}
+                  </span>
                 ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      <Card className="control-card">
-        <CardHeader>
-          <div className="flex w-full flex-wrap items-center justify-between gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <span className="metric-card__icon" aria-hidden="true">
-                  <GitCompare className="h-3.5 w-3.5" />
+                <span className="ml-auto text-xs text-muted">
+                  {cluster.fired_signals.join(', ')}
                 </span>
-                Compare runs
-              </CardTitle>
-              <p className="chart-card__description">
-                Select two or more runs to compare loss curves, configs, and common causes.
-              </p>
-            </div>
-            <Button onClick={handleCompare} disabled={selected.length < 2 || comparing}>
-              {comparing ? 'Comparing…' : `Compare (${selected.length})`}
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {sortedRuns.map((run) => {
-            const isActive = run.is_active || run.name === activeRunName
-            const isSelected = selected.includes(run.name)
-            return (
-              <label
-                key={run.name}
-                className={cn(
-                  'flex w-full cursor-pointer items-center gap-3 rounded-lg border p-3 text-left transition-colors',
-                  isSelected
-                    ? 'border-accent/60 bg-accent/5'
-                    : 'border-border bg-background hover:border-accent/30'
-                )}
-              >
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 shrink-0 accent-[var(--color-accent)]"
-                  checked={isSelected}
-                  onChange={() => toggleSelect(run.name)}
-                  aria-label={`Select run ${run.name}`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm font-semibold">{run.name}</span>
-                    {isActive && <Badge variant="accent">Active</Badge>}
-                    {run.spike_count > 0 && (
-                      <Badge variant="danger">{run.spike_count} spikes</Badge>
-                    )}
-                  </div>
-                  <p className="mt-0.5 truncate text-xs text-muted">
-                    {run.model_name ?? 'Unknown model'}
-                    {run.detector?.name ? ` · ${run.detector.name} detector` : ''}
-                    {run.n_global_rows != null ? ` · ${run.n_global_rows} steps` : ''}
-                    {' · started '}
-                    {formatTime(run.start_time)}
-                  </p>
-                </div>
-                <div className="shrink-0 text-right">
-                  <div className="text-[10px] uppercase tracking-wider text-muted">Last loss</div>
-                  <div
-                    className={cn(
-                      'font-mono text-sm font-semibold',
-                      run.last_loss != null && run.last_loss > 3 ? 'text-danger' : 'text-foreground'
-                    )}
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {cluster.runs.map((name) => (
+                  <Button
+                    key={name}
+                    variant={name === activeRunName ? 'secondary' : 'ghost'}
+                    size="sm"
+                    onClick={() => open(name)}
                   >
-                    {formatLoss(run.last_loss)}
-                  </div>
-                </div>
+                    {name}
+                  </Button>
+                ))}
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={(e) => {
-                    e.preventDefault()
-                    switchRun(run.name)
-                  }}
-                  title="Open this run"
+                  disabled={counterexampleLoading}
+                  onClick={() => handleCounterexample(cluster.runs[0])}
+                  className="ml-auto"
                 >
-                  Open
+                  {counterexampleLoading ? 'Finding…' : 'Why this & vs. stable'}
                 </Button>
-              </label>
-            )
-          })}
-        </CardContent>
-      </Card>
+              </div>
+              {cluster.loss_band?.steps?.length > 0 && (
+                <div className="mt-2">
+                  <LineChart
+                    x={cluster.loss_band.steps}
+                    height={120}
+                    series={[
+                      { label: 'Median', values: cluster.loss_band.median, color: 'var(--ink)' },
+                      {
+                        label: 'Upper quartile',
+                        values: cluster.loss_band.upper,
+                        color: 'var(--subtle)',
+                        width: 1,
+                      },
+                      {
+                        label: 'Lower quartile',
+                        values: cluster.loss_band.lower,
+                        color: 'var(--subtle)',
+                        width: 1,
+                      },
+                    ]}
+                    ariaLabel={`Normalised loss band for ${cluster.label}`}
+                  />
+                </div>
+              )}
+              {cluster.crossing_steps?.length > 0 && (
+                <p className="mt-2 flex flex-wrap gap-x-2 text-xs text-muted">
+                  <span>first signal at</span>
+                  {cluster.crossing_steps.map((step, i) => (
+                    <span key={`${step}-${i}`} className="text-ink">
+                      step {step}
+                    </span>
+                  ))}
+                </p>
+              )}
+            </div>
+          ))}
+          {clusters.unclustered?.length > 0 && (
+            <p className="border-t border-border px-4 py-3 text-xs text-muted">
+              {clusters.unclustered.length} stable run(s), no early-warning signal fired:{' '}
+              {clusters.unclustered.join(', ')}
+            </p>
+          )}
+        </Panel>
+      )}
 
-      <ErrorMessage message={compareError} onRetry={handleCompare} />
-
-      {compareData && <ComparePanel data={compareData} />}
-
-      <p className="text-xs text-muted">
-        Selecting a run with “Open” switches the Timeline, Layer, Diff, and Spike views to that run.
-        Check boxes to compare runs side by side.
-      </p>
+      {counterexampleError && <ErrorMessage message={counterexampleError} />}
+      {counterexample && <CounterexamplePanel data={counterexample} />}
     </div>
+  )
+}
+
+function CounterexamplePanel({ data }) {
+  const q = series(data.loss_series?.[data.query_run])
+  const s = series(data.loss_series?.[data.counterexample_run])
+  const x = q.x.length >= s.x.length ? q.x : s.x
+  const align = (from) => x.map((step) => from.y[from.x.indexOf(step)] ?? null)
+  return (
+    <Panel title={`Why ${data.query_run} vs. ${data.counterexample_run}`}>
+      <p className="text-sm text-muted">
+        The nearest stable run by config distance ({data.config_distance}).{' '}
+        {data.first_signal
+          ? `First signal: ${data.first_signal} at step ${data.crossing_step}.`
+          : 'No early-warning signal fired in the query run.'}
+      </p>
+      <div className="mt-3">
+        <LineChart
+          x={x}
+          height={240}
+          series={[
+            { label: data.query_run, values: align(q), color: seriesColor(1) },
+            { label: data.counterexample_run, values: align(s), color: seriesColor(0) },
+          ]}
+          ariaLabel="Loss of the query run and its nearest stable run"
+        />
+      </div>
+      {data.config_diff?.length > 0 && (
+        <table className="mt-3 w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-muted">
+              <th className="py-2 pr-4 font-normal">Config field</th>
+              <th className="py-2 pr-4 font-normal">{data.query_run}</th>
+              <th className="py-2 pr-4 font-normal">{data.counterexample_run}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.config_diff.map((entry) => (
+              <tr key={entry.field} className="border-t border-border">
+                <td className="py-2 pr-4 text-muted">{entry.field}</td>
+                <td className="py-2 pr-4">{String(entry.query_value)}</td>
+                <td className="py-2 pr-4">{String(entry.stable_value)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Panel>
   )
 }
 
@@ -448,185 +369,136 @@ function ComparePanel({ data }) {
     common_cause,
     concentration_series,
   } = data
-  const colorByName = Object.fromEntries(
-    names.map((name, i) => [name, RUN_PALETTE[i % RUN_PALETTE.length]])
-  )
-
-  const traces = names.map((name) => ({
-    x: loss_series[name]?.map((row) => row.step) ?? [],
-    y: loss_series[name]?.map((row) => row.loss) ?? [],
-    type: 'scatter',
-    mode: 'lines',
-    name,
-    line: { color: colorByName[name], width: 1.5 },
-  }))
-
-  const hasConcentration = names.some((name) => (concentration_series?.[name]?.length ?? 0) > 0)
-  const concentrationTraces = names
-    .filter((name) => concentration_series?.[name]?.length > 0)
-    .map((name) => ({
-      x: concentration_series[name].map((row) => row.step),
-      y: concentration_series[name].map((row) => row.max_share),
-      type: 'scatter',
-      mode: 'lines',
-      name,
-      line: { color: colorByName[name], width: 1.5 },
-    }))
-
-  const shapes = divergence
-    ? [
-        {
-          type: 'line',
-          xref: 'x',
-          x0: divergence.step,
-          x1: divergence.step,
-          yref: 'paper',
-          y0: 0,
-          y1: 1,
-          line: { color: '#f87171', width: 1.5, dash: 'dash' },
-        },
-      ]
-    : []
+  const allSteps = [
+    ...new Set(names.flatMap((n) => (loss_series[n] ?? []).map((r) => r.step))),
+  ].sort((a, b) => a - b)
+  const lossOf = (name) => {
+    const byStep = new Map((loss_series[name] ?? []).map((r) => [r.step, r.loss]))
+    return allSteps.map((step) => byStep.get(step) ?? null)
+  }
+  const concNames = names.filter((n) => concentration_series?.[n]?.length > 0)
+  const concSteps = [
+    ...new Set(concNames.flatMap((n) => concentration_series[n].map((r) => r.step))),
+  ].sort((a, b) => a - b)
+  const concOf = (name) => {
+    const byStep = new Map(concentration_series[name].map((r) => [r.step, r.max_share]))
+    return concSteps.map((step) => byStep.get(step) ?? null)
+  }
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard label="Compared runs" value={names.length} icon={GitCompare} />
-        <StatCard
-          label="Divergence point"
-          value={divergence ? `Step ${divergence.step}` : 'No durable divergence'}
-          icon={TrendingUp}
-        />
-        <StatCard label="Config differences" value={config_diff.length} icon={FolderKanban} />
-      </div>
+    <div className="space-y-4">
+      <StatStrip
+        items={[
+          { label: 'Compared runs', value: names.length },
+          {
+            label: 'Divergence point',
+            value: divergence ? `Step ${divergence.step}` : 'No durable divergence',
+          },
+          { label: 'Config differences', value: config_diff.length },
+          { label: 'Common causes', value: common_cause.length },
+        ]}
+      />
 
-      <ChartCard
-        title="Loss curves"
-        description={
-          divergence
+      <Panel title="Loss curves">
+        <p className="text-sm text-muted">
+          {divergence
             ? `Runs durably separate at step ${divergence.step} (gap sustained for ${divergence.min_run}+ steps).`
-            : 'No durable separation found across the selected runs.'
-        }
-      >
-        <Chart
-          data={traces}
-          layout={{ height: 340, shapes, legend: { orientation: 'h', y: -0.15 } }}
-        />
-      </ChartCard>
-
-      {hasConcentration && (
-        <ChartCard
-          title="Routing / addressing concentration"
-          description="Max expert / slot share per run. A run crossing 0.6–0.85 has a concentrated router or addressor — the architecture-aware early-warning signal."
-        >
-          <Chart
-            data={concentrationTraces}
-            layout={{
-              height: 300,
-              legend: { orientation: 'h', y: -0.15 },
-              yaxis: { range: [0, 1] },
-              shapes: [
-                {
-                  type: 'line',
-                  xref: 'paper',
-                  x0: 0,
-                  x1: 1,
-                  yref: 'y',
-                  y0: 0.6,
-                  y1: 0.6,
-                  line: { color: '#f87171', width: 1, dash: 'dot' },
-                },
-                {
-                  type: 'line',
-                  xref: 'paper',
-                  x0: 0,
-                  x1: 1,
-                  yref: 'y',
-                  y0: 0.85,
-                  y1: 0.85,
-                  line: { color: '#f87171', width: 1, dash: 'dash' },
-                },
-              ],
-            }}
+            : 'No durable separation found across the selected runs.'}
+        </p>
+        <div className="mt-3">
+          <LineChart
+            x={allSteps}
+            height={300}
+            series={names.map((name, i) => ({
+              label: name,
+              values: lossOf(name),
+              color: seriesColor(i),
+            }))}
+            markers={
+              divergence ? [{ at: divergence.step, label: 'divergence', kind: 'spike' }] : []
+            }
+            ariaLabel="Loss curves of the compared runs"
           />
-        </ChartCard>
+        </div>
+      </Panel>
+
+      {concNames.length > 0 && (
+        <Panel title="Routing / addressing concentration">
+          <p className="text-sm text-muted">
+            Max expert or slot share per run. Crossing 0.6–0.85 means a concentrated router or
+            addressor, the architecture-aware early-warning signal.
+          </p>
+          <div className="mt-3">
+            <LineChart
+              x={concSteps}
+              height={240}
+              series={concNames.map((name) => ({
+                label: name,
+                values: concOf(name),
+                color: seriesColor(names.indexOf(name)),
+              }))}
+              limit={[
+                { value: 0.6, label: '0.6' },
+                { value: 0.85, label: '0.85' },
+              ]}
+              ariaLabel="Routing concentration of the compared runs"
+            />
+          </div>
+        </Panel>
       )}
 
       {common_cause.length > 0 && (
-        <Card className="story-card">
-          <CardHeader>
-            <CardTitle>Common cause</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-xs leading-relaxed">
-            {common_cause.map((cause) => {
-              const isConcentration = cause.field === 'max routing concentration'
-              return (
-                <p key={cause.field} className="rounded-md bg-background p-2">
-                  <span className="font-mono">{cause.field}</span>
-                  {isConcentration ? (
-                    <>
-                      : every run with spikes concentrated (peak{' '}
-                      <span className="font-semibold text-danger">
-                        {JSON.stringify(cause.spiked_value)}
-                      </span>
-                      ), every stable run stayed diffuse (peak{' '}
-                      <span className="font-semibold text-foreground">
-                        {JSON.stringify(cause.stable_value)}
-                      </span>
-                      ).
-                    </>
-                  ) : (
-                    <>
-                      : every run with spikes has{' '}
-                      <span className="font-semibold text-danger">
-                        {JSON.stringify(cause.spiked_value)}
-                      </span>
-                      , every stable run has{' '}
-                      <span className="font-semibold text-foreground">
-                        {JSON.stringify(cause.stable_value)}
-                      </span>
-                      .
-                    </>
-                  )}
-                </p>
-              )
-            })}
-          </CardContent>
-        </Card>
+        <Panel title="Common cause">
+          <div className="space-y-2 text-sm">
+            {common_cause.map((cause) => (
+              <p key={cause.field}>
+                <span className="font-medium">{cause.field}</span>
+                {cause.field === 'max routing concentration' ? (
+                  <>
+                    : every run with spikes concentrated (peak{' '}
+                    <span className="text-red">{JSON.stringify(cause.spiked_value)}</span>), every
+                    stable run stayed diffuse (peak {JSON.stringify(cause.stable_value)}).
+                  </>
+                ) : (
+                  <>
+                    : every run with spikes has{' '}
+                    <span className="text-red">{JSON.stringify(cause.spiked_value)}</span>, every
+                    stable run has {JSON.stringify(cause.stable_value)}.
+                  </>
+                )}
+              </p>
+            ))}
+          </div>
+        </Panel>
       )}
 
       {config_diff.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Config differences</CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-border text-muted">
-                  <th className="py-2 pr-4 font-medium">Field</th>
+        <Panel title="Config differences" bodyClassName="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead>
+              <tr className="text-xs text-muted">
+                <th className="px-4 py-2 font-normal">Field</th>
+                {names.map((name) => (
+                  <th key={name} className="px-4 py-2 font-normal">
+                    {name}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {config_diff.map((diff) => (
+                <tr key={diff.field} className="border-t border-border">
+                  <td className="px-4 py-2">{diff.field}</td>
                   {names.map((name) => (
-                    <th key={name} className="py-2 pr-4 font-mono font-medium">
-                      {name}
-                    </th>
+                    <td key={name} className="px-4 py-2">
+                      {JSON.stringify(diff.values[name] ?? '—')}
+                    </td>
                   ))}
                 </tr>
-              </thead>
-              <tbody>
-                {config_diff.map((diff) => (
-                  <tr key={diff.field} className="border-b border-border/50 last:border-0">
-                    <td className="py-2 pr-4 font-mono">{diff.field}</td>
-                    {names.map((name) => (
-                      <td key={name} className="py-2 pr-4 font-mono">
-                        {JSON.stringify(diff.values[name] ?? '—')}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
+              ))}
+            </tbody>
+          </table>
+        </Panel>
       )}
     </div>
   )

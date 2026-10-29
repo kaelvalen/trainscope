@@ -1,14 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RotateCcw } from 'lucide-react'
 import { useRun } from '../RunContext.jsx'
 import { fetchReplay } from '../api.js'
-import Chart from '../components/Chart.jsx'
+import { CHART_COLORS } from '../theme.js'
+import LineChart from '../components/charts/LineChart.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
+import { Panel } from '../components/ui/Panel.jsx'
 import { Skeleton } from '../components/ui/Skeleton.jsx'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.jsx'
-import { Badge } from '../components/ui/Badge.jsx'
-import { StatCard } from '../components/ui/StatCard.jsx'
+import { StatStrip } from '../components/ui/StatStrip.jsx'
 
 export default function Replay() {
   const { globalData } = useRun()
@@ -19,134 +18,94 @@ export default function Replay() {
   useEffect(() => {
     let cancelled = false
     fetchReplay()
-      .then((payload) => {
-        if (!cancelled) setData(payload)
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message || 'Failed to load replay plan.')
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
+      .then((payload) => !cancelled && setData(payload))
+      .catch((err) => !cancelled && setError(err?.message || 'Failed to load replay plan.'))
+      .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
   }, [])
 
-  const skippedStepSet = useMemo(() => new Set(data?.skipped_steps ?? []), [data])
+  // A skip that lands on the step whose batch caused the spike is the interesting one.
+  const chart = useMemo(() => {
+    const skipped = new Set(data?.skipped_steps ?? [])
+    const rows = globalData.filter((r) => r.step != null && r.loss != null)
+    return {
+      x: rows.map((r) => r.step),
+      loss: rows.map((r) => r.loss),
+      skipped: rows.map((r) => (skipped.has(r.step) ? r.loss : null)),
+    }
+  }, [globalData, data])
 
-  // Loss curve with skipped steps highlighted: a skip that lands exactly on a
-  // step whose batch_index caused the spike is the interesting one.
-  const chartData = useMemo(() => {
-    const loss = globalData
-      .filter((r) => r.step != null && r.loss != null)
-      .map((r) => ({ x: r.step, y: r.loss }))
-    return [
-      {
-        x: loss.map((p) => p.x),
-        y: loss.map((p) => p.y),
-        name: 'loss',
-        line: { color: '#38bdf8', width: 2 },
-        mode: 'lines',
-      },
-      {
-        x: loss.filter((p) => skippedStepSet.has(p.x)).map((p) => p.x),
-        y: loss.filter((p) => skippedStepSet.has(p.x)).map((p) => p.y),
-        name: 'skipped',
-        mode: 'markers',
-        marker: { color: '#f87171', size: 8, symbol: 'x' },
-      },
-    ]
-  }, [globalData, skippedStepSet])
-
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-16" />
-        <Skeleton className="h-16" />
-        <Skeleton className="h-80" />
-      </div>
-    )
-  }
-
-  if (error) {
-    return <ErrorMessage message={error} />
-  }
+  if (loading) return <Skeleton className="h-80" />
+  if (error) return <ErrorMessage message={error} />
 
   const config = data?.config
-
   if (!config || !Array.isArray(data?.skipped_batches) || data.skipped_batches.length === 0) {
     return (
-      <EmptyState icon={<RotateCcw className="h-5 w-5" />}>
+      <EmptyState>
         No replay plan found for this run. Generate one with{' '}
-        <code className="rounded bg-foreground/5 px-1.5 py-0.5 font-mono text-xs">
-          trainscope replay --checkpoint &lt;path&gt; --skip-batches ...
-        </code>{' '}
-        — the UI will show exactly which training steps those batches map to.
+        <code>trainscope replay --checkpoint &lt;path&gt; --skip-batches …</code> and this view
+        shows which training steps those batches map to.
       </EmptyState>
     )
   }
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Skipped batches"
-          value={data.skipped_batches.length}
-          icon={RotateCcw}
-        />
-        <StatCard label="Steps to skip" value={data.skipped_steps.length} icon={RotateCcw} />
-        <StatCard label="Total training steps" value={data.n_global_steps} icon={RotateCcw} />
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Replay</h1>
+        <p className="mt-1 text-sm text-muted">
+          Which training steps a resume with this plan will skip.
+        </p>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <span className="metric-card__icon" aria-hidden="true">
-              <RotateCcw className="h-3.5 w-3.5" />
-            </span>
-            Replay plan
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-            <div>
-              <span className="text-muted">Checkpoint: </span>
-              <span className="font-mono text-xs">{config.checkpoint}</span>
-            </div>
-            {config.generated_at && (
-              <div>
-                <span className="text-muted">Generated: </span>
-                <span className="font-mono text-xs">{config.generated_at}</span>
-              </div>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {data.skipped_batches.map((batch) => (
-              <Badge key={batch} variant="warning">
-                batch {batch}
-              </Badge>
-            ))}
-          </div>
-          {config.notes && <p className="text-xs text-muted">{config.notes}</p>}
-        </CardContent>
-      </Card>
+      <StatStrip
+        items={[
+          { label: 'Skipped batches', value: data.skipped_batches.length },
+          { label: 'Steps to skip', value: data.skipped_steps.length },
+          { label: 'Training steps', value: data.n_global_steps },
+          { label: 'Generated', value: config.generated_at?.slice(0, 10) ?? '—' },
+        ]}
+      />
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Loss with skipped steps</CardTitle>
-          <p className="chart-card__description">
-            Red × markers mark training steps whose batch_index is in the replay&apos;s skip set —
-            the steps SkippingDataLoader will skip on resume.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <Chart
-            data={chartData}
-            layout={{ height: 320, margin: { l: 52, r: 12, t: 8, b: 36 } }}
+      <Panel title="Replay plan">
+        <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+          <dt className="text-muted">Checkpoint</dt>
+          <dd className="break-all">{config.checkpoint}</dd>
+          {config.generated_at && (
+            <>
+              <dt className="text-muted">Generated</dt>
+              <dd>{config.generated_at}</dd>
+            </>
+          )}
+          <dt className="text-muted">Batches</dt>
+          <dd className="flex flex-wrap gap-x-3">
+            {data.skipped_batches.map((batch) => (
+              <span key={batch}>batch {batch}</span>
+            ))}
+          </dd>
+        </dl>
+        {config.notes && <p className="mt-2 text-sm text-muted">{config.notes}</p>}
+      </Panel>
+
+      <Panel title="Loss with skipped steps">
+        <p className="text-sm text-muted">
+          Red points are steps whose batch is in the skip set, the steps SkippingDataLoader skips on
+          resume.
+        </p>
+        <div className="mt-3">
+          <LineChart
+            x={chart.x}
+            height={280}
+            series={[
+              { label: 'Loss', values: chart.loss, color: CHART_COLORS.loss },
+              { label: 'Skipped', values: chart.skipped, color: 'var(--red)', points: true },
+            ]}
+            ariaLabel="Loss with the steps the replay skips"
           />
-        </CardContent>
-      </Card>
+        </div>
+      </Panel>
     </div>
   )
 }

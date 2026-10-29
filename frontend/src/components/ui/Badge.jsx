@@ -1,19 +1,19 @@
 import { cn } from '../../utils.js'
 
 const variants = {
-  default: 'status-badge--default',
-  success: 'status-badge--success',
-  warning: 'status-badge--warning',
-  danger: 'status-badge--danger',
-  accent: 'status-badge--accent',
+  default: 'text-muted',
+  success: 'text-ink',
+  warning: 'text-amber',
+  danger: 'text-red',
+  accent: 'text-blue',
 }
 
 export function Badge({ variant = 'default', className, children }) {
   return (
     <span
       className={cn(
-        'status-badge inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold',
-        variants[variant],
+        'inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs',
+        variants[variant] ?? variants.default,
         className
       )}
     >

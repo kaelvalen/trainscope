@@ -5,10 +5,10 @@ const ToastContext = createContext(null)
 const MAX_VISIBLE_TOASTS = 3
 
 const variantStyles = {
-  info: 'border-accent/30 bg-panel',
-  success: 'border-success/30 bg-panel',
-  warning: 'border-warning/30 bg-panel',
-  danger: 'border-danger/30 bg-panel',
+  info: 'border-border',
+  success: 'border-border',
+  warning: 'border-amber',
+  danger: 'border-red',
 }
 
 export function ToastProvider({ children }) {
@@ -62,16 +62,16 @@ function ToastItem({ toast, onDismiss }) {
   return (
     <div
       className={cn(
-        'pointer-events-auto flex flex-col gap-1 rounded-xl border p-3 shadow-lg backdrop-blur',
-        'transition-all duration-300 ease-out',
+        'pointer-events-auto flex flex-col gap-1 rounded-panel border bg-surface p-3',
+        'shadow-[0_8px_24px_rgba(0,0,0,0.08)]',
         variantStyles[toast.variant || 'info']
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <span className="text-sm font-semibold text-foreground">{toast.title}</span>
+        <span className="text-sm font-medium text-ink">{toast.title}</span>
         <button
           onClick={() => onDismiss(toast.id)}
-          className="text-muted transition-colors hover:text-foreground"
+          className="-m-2 p-2 text-muted transition-colors hover:text-ink"
           aria-label="Dismiss notification"
         >
           ×
