@@ -1,0 +1,54 @@
+.line-chart {
+  position: relative;
+}
+
+.line-chart .uplot,
+.line-chart .u-legend {
+  font-family: 'Geist Variable', system-ui, sans-serif;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.line-chart .u-legend {
+  text-align: left;
+  padding: 2px 0 0 4px;
+}
+
+.line-chart .u-legend .u-marker {
+  width: 10px;
+  height: 2px;
+  border-radius: 1px;
+}
+
+.line-chart .u-select {
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+}
+
+.line-chart .u-cursor-x {
+  border-right: 1px solid var(--border-strong);
+}
+
+.line-chart .u-cursor-y {
+  display: none;
+}
+
+.chart-tooltip {
+  position: absolute;
+  z-index: 10;
+  pointer-events: none;
+  min-width: 120px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-tooltip-step {
+  color: var(--muted);
+  margin-bottom: 2px;
+}
