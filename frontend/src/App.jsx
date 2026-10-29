@@ -9,7 +9,7 @@ import useKeyboardShortcuts from './hooks/useKeyboardShortcuts.js'
 import { NAV_ITEMS, resolveTab } from './navigation.js'
 
 const Runs = lazy(() => import('./views/Runs.jsx'))
-const Overview = lazy(() => import('./views/Timeline.jsx'))
+const Overview = lazy(() => import('./views/Overview.jsx'))
 const LayerDrilldown = lazy(() => import('./views/LayerDrilldown.jsx'))
 const ExpertUtilization = lazy(() => import('./views/ExpertUtilization.jsx'))
 const DiffView = lazy(() => import('./views/DiffView.jsx'))

@@ -52,13 +52,15 @@ export default function LayerHeatmap({
   const toPx = (step) => labelWidth + ((step - x0) / Math.max(1e-9, x1 - x0)) * plotW
   const bucketEnd = (i) => (i + 1 < starts.length ? starts[i + 1] : (domain?.[1] ?? starts[i] + 1))
 
+  const hasRows = rows.length > 0
+  // The canvas wrapper only exists once rows do, so observe it when it appears.
   useEffect(() => {
     const el = wrapRef.current
     if (!el) return undefined
     const ro = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)))
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [hasRows])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -136,8 +138,9 @@ export default function LayerHeatmap({
     }
   })
 
-  if (!matrix || matrix.layers.length === 0) {
-    return <p className="text-sm text-muted">No layer metrics recorded for this run</p>
+  if (!matrix) return <p className="px-2 text-sm text-muted">Loading layer metrics</p>
+  if (matrix.layers.length === 0) {
+    return <p className="px-2 text-sm text-muted">No layer metrics recorded for this run</p>
   }
 
   const hit = (event) => {
