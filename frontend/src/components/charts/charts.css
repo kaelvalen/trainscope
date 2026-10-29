@@ -52,3 +52,37 @@
   color: var(--muted);
   margin-bottom: 2px;
 }
+
+.layer-heatmap {
+  position: relative;
+}
+
+.heatmap-toggle {
+  position: relative;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  transition-property: background-color, color, border-color;
+  transition-duration: 150ms;
+}
+
+/* 40px hit area around a 28px control. */
+.heatmap-toggle::before {
+  content: '';
+  position: absolute;
+  inset: -6px 0;
+}
+
+.heatmap-toggle:hover {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.heatmap-toggle[aria-pressed='true'] {
+  border-color: var(--ink);
+  color: var(--ink);
+}

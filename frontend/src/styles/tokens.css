@@ -14,6 +14,7 @@
   --warm-band: rgba(0, 0, 0, 0.035);
   --blue: #0a6cff;
   --amber: #c2850c;
+  --heat: #9b1c22;
   --hover: #f4f4f4;
   --focus: #0a6cff;
   --radius-panel: 10px;
@@ -35,6 +36,7 @@
     --warm-band: rgba(255, 255, 255, 0.04);
     --blue: #3b8bff;
     --amber: #e0a72e;
+    --heat: #ff5c61;
     --hover: #1c1c1c;
     --focus: #3b8bff;
   }
