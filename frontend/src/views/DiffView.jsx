@@ -1,17 +1,16 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeftRight, GitCompare } from 'lucide-react'
 import { useRun } from '../RunContext.jsx'
 import { fetchDiff } from '../api.js'
-import { truncateLayerName, CHART_COLORS } from '../theme.js'
-import Chart from '../components/Chart.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
-import LoadingSpinner from '../components/LoadingSpinner.jsx'
 import EmptyState from '../components/EmptyState.jsx'
 import { Button } from '../components/ui/Button.jsx'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.jsx'
-import { ChartCard } from '../components/ui/ChartCard.jsx'
-import { Badge } from '../components/ui/Badge.jsx'
-import { StatCard } from '../components/ui/StatCard.jsx'
+import { Panel } from '../components/ui/Panel.jsx'
+import { Skeleton } from '../components/ui/Skeleton.jsx'
+import { StatStrip } from '../components/ui/StatStrip.jsx'
+
+const fmt = (v) => (Number.isFinite(v) ? String(+v.toPrecision(4)) : '—')
+const inputClass =
+  'h-8 w-32 rounded-control border border-border bg-surface px-2.5 text-sm placeholder:text-subtle'
 
 export default function DiffView() {
   const { globalData } = useRun()
@@ -36,7 +35,7 @@ export default function DiffView() {
     const a = parseInt(stepA, 10)
     const b = parseInt(stepB, 10)
     if (Number.isNaN(a) || Number.isNaN(b)) {
-      setError('Please enter valid step numbers.')
+      setError('Enter two step numbers to compare.')
       return
     }
     if (a === b) {
@@ -46,8 +45,7 @@ export default function DiffView() {
     setError(null)
     setLoading(true)
     try {
-      const data = await fetchDiff(a, b)
-      setDiffData(data)
+      setDiffData(await fetchDiff(a, b))
       setCompared({ a, b })
     } catch (err) {
       setError(err?.message || 'Failed to fetch diff data.')
@@ -56,205 +54,147 @@ export default function DiffView() {
     }
   }
 
-  function handleKeyDown(e) {
-    if (e.key === 'Enter') handleCompare()
-  }
-
-  function setComparison(a, b) {
+  const setComparison = (a, b) => {
     if (a == null || b == null) return
     setStepA(String(a))
     setStepB(String(b))
     setError(null)
   }
 
-  function handleSwap() {
-    setStepA(stepB)
-    setStepB(stepA)
-  }
-
-  const layers = diffData.map((d) => d.layer)
   const kls = diffData.map((d) => d.kl_divergence)
-  const barColors = layers.map((_, i) => (i < 3 ? CHART_COLORS.diffTop : CHART_COLORS.diffRest))
-
-  const topLayers = diffData.slice(0, 3)
-  const maxKL = diffData.length > 0 ? Math.max(...kls) : 0
-  const totalKL = diffData.length > 0 ? kls.reduce((a, b) => a + b, 0) : 0
+  const maxKL = kls.length ? Math.max(...kls) : 0
+  const totalKL = kls.reduce((a, b) => a + b, 0)
 
   return (
-    <div className="space-y-5">
-      <Card className="control-card">
-        <CardHeader>
-          <div>
-            <CardTitle className="flex items-center gap-2">
-              <span className="metric-card__icon" aria-hidden="true">
-                <GitCompare className="h-3.5 w-3.5" />
-              </span>
-              Compare two steps
-            </CardTitle>
-            <p className="chart-card__description">
-              Find the layers whose weight distributions changed most between checkpoints. The Δgrad
-              badge shows each layer&apos;s gradient-norm change between the two steps.
-            </p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-wrap items-end gap-3 sm:gap-4">
-            <div className="flex min-w-[9rem] flex-1 flex-col gap-2 sm:max-w-[12rem]">
-              <label htmlFor="diff-step-a" className="control-label">
-                Step A
-              </label>
-              <input
-                id="diff-step-a"
-                type="number"
-                min="0"
-                value={stepA}
-                onChange={(e) => setStepA(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="e.g. 4400"
-                className="control-input w-full"
-              />
-            </div>
+    <div className="space-y-4">
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Compare steps</h1>
+        <p className="mt-1 text-sm text-muted">
+          Layers whose weight distributions changed most between two recorded steps.
+        </p>
+      </div>
 
-            <div className="flex min-w-[9rem] flex-1 flex-col gap-2 sm:max-w-[12rem]">
-              <label htmlFor="diff-step-b" className="control-label">
-                Step B
-              </label>
-              <input
-                id="diff-step-b"
-                type="number"
-                min="0"
-                value={stepB}
-                onChange={(e) => setStepB(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="e.g. 4450"
-                className="control-input w-full"
-              />
-            </div>
+      <div className="flex flex-wrap items-end gap-3 rounded-panel border border-border bg-surface px-4 py-3">
+        <label className="flex flex-col gap-1 text-xs text-muted" htmlFor="diff-step-a">
+          Step A
+          <input
+            id="diff-step-a"
+            type="number"
+            min="0"
+            value={stepA}
+            onChange={(e) => setStepA(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCompare()}
+            className={inputClass}
+          />
+        </label>
+        <label className="flex flex-col gap-1 text-xs text-muted" htmlFor="diff-step-b">
+          Step B
+          <input
+            id="diff-step-b"
+            type="number"
+            min="0"
+            value={stepB}
+            onChange={(e) => setStepB(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleCompare()}
+            className={inputClass}
+          />
+        </label>
+        <Button onClick={handleCompare} disabled={loading}>
+          {loading ? 'Comparing…' : 'Compare'}
+        </Button>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setComparison(previousStep, latestStep)}
+            disabled={latestStep == null || previousStep === latestStep}
+          >
+            Latest pair
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setComparison(availableSteps[0], latestStep)}
+            disabled={availableSteps.length < 2}
+          >
+            First vs latest
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setComparison(stepB, stepA)}
+            disabled={!stepA || !stepB}
+          >
+            Swap
+          </Button>
+        </div>
+      </div>
 
-            <Button onClick={handleCompare} disabled={loading} className="min-w-[7.5rem]">
-              {loading ? 'Comparing…' : 'Compare'}
-            </Button>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span className="control-hint">Quick compare</span>
-            <Button
-              variant="muted"
-              size="sm"
-              onClick={() => setComparison(previousStep, latestStep)}
-              disabled={latestStep == null || previousStep == null || previousStep === latestStep}
-            >
-              Latest pair
-            </Button>
-            <Button
-              variant="muted"
-              size="sm"
-              onClick={() => setComparison(availableSteps[0], latestStep)}
-              disabled={availableSteps.length < 2}
-            >
-              First vs latest
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleSwap}
-              disabled={!stepA || !stepB}
-              title="Swap steps"
-            >
-              <ArrowLeftRight className="h-3.5 w-3.5" />
-              Swap
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      {loading && <LoadingSpinner message="Comparing steps…" />}
+      {loading && <Skeleton className="h-64" />}
       <ErrorMessage message={error} onRetry={handleCompare} />
 
       {!loading && diffData.length === 0 && compared && !error && (
-        <EmptyState icon={<GitCompare className="h-5 w-5" />}>
-          No layer data available for the selected steps.
+        <EmptyState>
+          No layer data recorded for steps {compared.a} and {compared.b}.
         </EmptyState>
       )}
 
       {!loading && diffData.length > 0 && compared && (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <StatCard label="Step A" value={compared.a} />
-            <StatCard label="Step B" value={compared.b} />
-            <StatCard label="Max KL Divergence" value={maxKL.toFixed(4)} />
-            <StatCard label="Total KL Divergence" value={totalKL.toFixed(4)} />
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <Card className="lg:col-span-1">
-              <CardHeader>
-                <CardTitle>Top diverged layers</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-2">
-                  {topLayers.map((layer, index) => (
-                    <li
-                      key={layer.layer}
-                      className="flex items-center justify-between rounded-md bg-background p-2 text-sm"
-                    >
-                      <span className="truncate pr-2 text-foreground" title={layer.layer}>
-                        {index + 1}. {truncateLayerName(layer.layer, 35)}
-                      </span>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        {layer.grad_norm_change != null && (
-                          <Badge
-                            variant={
-                              Math.abs(layer.grad_norm_change) > 1
-                                ? 'danger'
-                                : layer.grad_norm_change > 0
-                                  ? 'warning'
-                                  : 'default'
-                            }
-                          >
-                            Δgrad {layer.grad_norm_change > 0 ? '+' : ''}
-                            {layer.grad_norm_change.toFixed(2)}
-                          </Badge>
-                        )}
-                        <Badge
-                          variant={index === 0 ? 'danger' : index === 1 ? 'warning' : 'accent'}
-                        >
-                          {layer.kl_divergence.toFixed(4)}
-                        </Badge>
+          <StatStrip
+            items={[
+              { label: 'Step A', value: compared.a },
+              { label: 'Step B', value: compared.b },
+              { label: 'Max KL divergence', value: fmt(maxKL) },
+              { label: 'Total KL divergence', value: fmt(totalKL) },
+            ]}
+          />
+          <Panel
+            title={`Distribution divergence, step ${compared.a} vs ${compared.b}`}
+            bodyClassName="overflow-x-auto"
+          >
+            <table className="w-full min-w-[560px] text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="px-4 py-2 font-normal">Layer</th>
+                  <th className="w-1/3 px-4 py-2 font-normal">KL divergence</th>
+                  <th className="px-4 py-2 text-right font-normal">Δ grad norm</th>
+                </tr>
+              </thead>
+              <tbody>
+                {diffData.map((d, i) => (
+                  <tr key={d.layer} className="border-t border-border">
+                    <td className="max-w-[24rem] truncate px-4 py-2" title={d.layer}>
+                      {d.layer}
+                    </td>
+                    <td className="px-4 py-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-1.5 flex-1 rounded-full bg-hover">
+                          <div
+                            className={`h-1.5 rounded-full ${i < 3 ? 'bg-red' : 'bg-ink'}`}
+                            style={{ width: `${maxKL > 0 ? (d.kl_divergence / maxKL) * 100 : 0}%` }}
+                          />
+                        </div>
+                        <span className="w-16 text-right">{fmt(d.kl_divergence)}</span>
                       </div>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-
-            <ChartCard
-              className="lg:col-span-2"
-              title={`Distribution divergence: ${compared.a} vs ${compared.b}`}
-              description="Red marks the three layers with the largest KL divergence."
-            >
-              <Chart
-                data={[
-                  {
-                    x: kls,
-                    y: layers.map((l) => truncateLayerName(l, 40)),
-                    type: 'bar',
-                    orientation: 'h',
-                    marker: { color: barColors },
-                    name: 'KL Divergence',
-                  },
-                ]}
-                layout={{
-                  height: Math.max(400, 30 * layers.length + 120),
-                  margin: { l: 180, r: 20, t: 24, b: 40 },
-                  yaxis: {
-                    automargin: true,
-                    categoryorder: 'array',
-                    categoryarray: [...layers].reverse(),
-                  },
-                }}
-              />
-            </ChartCard>
-          </div>
+                    </td>
+                    <td
+                      className={`px-4 py-2 text-right ${
+                        Math.abs(d.grad_norm_change ?? 0) > 1 ? 'text-red' : 'text-muted'
+                      }`}
+                    >
+                      {d.grad_norm_change == null
+                        ? '—'
+                        : `${d.grad_norm_change > 0 ? '+' : ''}${d.grad_norm_change.toFixed(2)}`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="border-t border-border px-4 py-2 text-xs text-muted">
+              Red marks the three layers with the largest KL divergence.
+            </p>
+          </Panel>
         </>
       )}
     </div>

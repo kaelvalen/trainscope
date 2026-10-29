@@ -36,10 +36,11 @@ export const CHART_COLORS = {
 }
 
 /**
- * Categorical series colors, in fixed order (never cycled): extra series past
- * the end share --subtle and are told apart by the legend.
+ * Categorical series colors in fixed order (never cycled). Series past the
+ * seventh share --subtle and rely on the legend; views with many entities
+ * should fold the tail into "Other" instead.
  */
-export const SERIES_COLORS = ['var(--ink)', 'var(--blue)', 'var(--amber)', 'var(--muted)']
+export const SERIES_COLORS = Array.from({ length: 7 }, (_, i) => `var(--series-${i + 1})`)
 export const seriesColor = (i) => SERIES_COLORS[i] ?? 'var(--subtle)'
 
 /** Resolve a CSS custom property to its value; canvas drawing needs real colors. */
