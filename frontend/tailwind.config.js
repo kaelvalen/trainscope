@@ -16,17 +16,6 @@ export default {
         blue: 'var(--blue)',
         amber: 'var(--amber)',
         hover: 'var(--hover)',
-        // Legacy names, mapped onto the new tokens until the views migrate (removed in the cleanup task).
-        background: 'var(--page)',
-        foreground: 'var(--ink)',
-        panel: 'var(--surface)',
-        accent: 'var(--blue)',
-        success: 'var(--ink)',
-        warning: 'var(--amber)',
-        danger: 'var(--red)',
-        'danger-bg': 'var(--red-band)',
-        purple: 'var(--muted)',
-        button: 'var(--ink)',
       },
       borderRadius: {
         panel: 'var(--radius-panel)',

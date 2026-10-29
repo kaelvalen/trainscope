@@ -36,8 +36,8 @@ export default class ErrorBoundary extends Component {
       if (custom) return custom
 
       return (
-        <div className="rounded-lg border border-border bg-panel p-10 text-center">
-          <h2 className="mb-2 text-lg font-semibold text-danger">Something went wrong.</h2>
+        <div className="rounded-panel border border-border bg-surface px-6 py-10">
+          <h2 className="mb-1 text-base font-medium text-red">This view failed to render</h2>
           <p className="mb-4 text-sm text-muted">
             {this.state.error?.message || 'An unexpected error occurred.'}
           </p>

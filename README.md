@@ -14,7 +14,7 @@ pip install trainscope
 trainscope demo   # trains 4 tiny runs (~10 s on CPU), 2 of which diverge, and opens the UI
 ```
 
-![Runs view: diverging runs clustered by their first early-warning signal, with the shared config trait and lead time](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/runs-view.png)
+![Runs index: every run with its status and cluster, and the diverging runs grouped by their first early-warning signal](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/runs-view.png)
 
 ## Table of contents
 
@@ -157,21 +157,21 @@ spike.
 
 ## Browser UI
 
-Seven views, one command:
+Six tabs and a runs index, one command:
 
 | View | What it shows |
 |------|---------------|
-| **Runs** | Every run under a root side by side — model, detector, last loss, spike count — plus run behavior clusters, cluster discriminant config traits, the common-fate loss band, and nearest-stable-run counterexample analysis |
-| **Timeline** | Loss + grad norm, top-8 layers by gradient variance, live WebSocket streaming |
-| **Layer Drill-down** | Kurtosis / grad norm / weight norm per layer with histogram scrubber |
-| **Routing & addressing** | Per-expert and per-slot share series over time, live-streamed over WebSocket |
-| **Diff View** | KL divergence of weight distributions between any two steps, with per-layer gradient-norm change |
-| **Spike Inspector** | **Spike Story Flow**: Chronological root cause cascade diagnosis & layer breakdown |
+| **Overview** | Run status, final loss and grad norm, the first warning step and spike window; loss and grad norm on one shared step axis with the warmup band and spike windows; a layer × step heatmap of how far each layer's gradient norm sits above its own baseline; and the signals that crossed their threshold before the spike, with their lead |
+| **Layers** | Grad norm / weight norm / activation kurtosis per parameter tensor with a weight-histogram scrubber |
+| **Spikes** | The chronological root-cause cascade for a spike, with the loss, grad norm and per-layer signals around it |
+| **Routing** | Per-expert and per-slot share series over time (shown when the run has MoE or addressor data) |
+| **Compare** | KL divergence of weight distributions between any two steps, with per-layer gradient-norm change |
 | **Replay** | The run's generated `replay_config.json` with the training steps its skip list maps to |
+| **Runs index** | Every run under a root in one table, behavior clusters with their shared config trait and lead, and nearest-stable-run counterexamples (open it from the breadcrumb) |
 
-Each view has its own URL (`http://127.0.0.1:7007/#spikes`), so a link to a view can be shared and survives a reload.
+Each view has its own URL (`http://127.0.0.1:7007/#spikes`), so a link to a view can be shared and survives a reload; the 1.9.0 links (`#timeline`, `#diff`, …) still work. The UI follows your system's light or dark setting and loads no fonts or scripts from the network.
 
-![Timeline view with the detector warmup band and the detected anomaly window](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/timeline-view.png)
+![Overview: loss and grad norm on a shared step axis, the layer heatmap below them, and the signals that crossed before the spike](https://raw.githubusercontent.com/kaelvalen/trainscope/main/docs/images/overview.png)
 
 The React UI is served by default after `pip install trainscope` (pre-compiled assets included). If developing from source:
 
