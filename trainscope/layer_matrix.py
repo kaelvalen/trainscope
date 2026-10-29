@@ -51,7 +51,8 @@ def build_layer_matrix(
 
     span = hi - lo + 1
     k = min(buckets, len(in_range))
-    bucket_starts = [lo + (i * span) // k for i in range(k)]
+    # ceil, so bucket i holds exactly the steps that ((step - lo) * k) // span maps to it
+    bucket_starts = [lo + -((-i * span) // k) for i in range(k)]
 
     baseline_steps = [s for s in all_steps if first_spike is not None and s < first_spike]
     if not baseline_steps:

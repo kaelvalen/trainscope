@@ -1350,3 +1350,92 @@ def test_layer_matrix_without_layers(tmp_path):
 def test_signals(client):
     body = client.get("/api/signals").json()
     assert {"fired", "first", "first_steps", "explosion_step"} <= set(body)
+
+
+def test_signals_report_training_steps_not_row_indices(tmp_path):
+    """With trace_every_n_steps > 1, crossings must be reported in step units."""
+    import asyncio
+
+    from trainscope.analysis import run_signal_signature
+
+    run = tmp_path / "run"
+    run.mkdir()
+    rows = [
+        {
+            "step": i * 10,
+            "loss": 1.0,
+            "grad_norm_before_clip": 1.0 + (0.01 * (i % 3)) + (50.0 if i >= 40 else 0.0),
+            "grad_norm_after_clip": 1.0,
+            "lr": 0.001,
+            "optimizer_v_norm": 0.0,
+            "step_time_ms": 1.0,
+            "batch_index": i,
+            "is_spike": False,
+            "cpu_memory_mb": 0.0,
+            "cuda_memory_mb": 0.0,
+        }
+        for i in range(60)
+    ]
+    _write_arrow(run / "global.arrow", GLOBAL_SCHEMA, rows)
+    sig = asyncio.run(run_signal_signature(run))
+    assert sig["first_steps"]["grad_norm"] == 400
+
+
+def test_concurrent_matrix_requests_share_one_build(run_dir, monkeypatch):
+    import asyncio
+    import time
+
+    import httpx
+
+    import trainscope.ui.server as server_module
+
+    calls = []
+    real = server_module.build_layer_matrix
+
+    def slow_build(*args, **kwargs):
+        calls.append(1)
+        time.sleep(0.3)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(server_module, "build_layer_matrix", slow_build)
+    app = create_app(str(run_dir))
+
+    async def go():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            a, b = await asyncio.gather(
+                c.get("/api/layers/matrix?buckets=7"), c.get("/api/layers/matrix?buckets=7")
+            )
+        return a, b
+
+    a, b = asyncio.run(go())
+    assert a.status_code == b.status_code == 200
+    assert a.json() == b.json()
+    assert len(calls) == 1
+
+
+def test_run_summary_flags_a_non_finite_last_loss(tmp_path):
+    """NaN serializes as null, so the summary must say explicitly that it diverged."""
+    run = tmp_path / "run"
+    run.mkdir()
+    (run / "meta.json").write_text(json.dumps({"trainscope_config": {"run_name": "nan-run"}}))
+    rows = [
+        {
+            "step": i,
+            "loss": float("nan") if i == 4 else 1.0,
+            "grad_norm_before_clip": 1.0,
+            "grad_norm_after_clip": 1.0,
+            "lr": 0.001,
+            "optimizer_v_norm": 0.0,
+            "step_time_ms": 1.0,
+            "batch_index": i,
+            "is_spike": False,
+            "cpu_memory_mb": 0.0,
+            "cuda_memory_mb": 0.0,
+        }
+        for i in range(5)
+    ]
+    _write_arrow(run / "global.arrow", GLOBAL_SCHEMA, rows)
+    summary = TestClient(create_app(str(run))).get("/api/runs").json()[0]
+    assert summary["last_loss"] is None
+    assert summary["last_loss_finite"] is False

@@ -189,7 +189,7 @@ def _table_to_rows(table: pa.Table) -> list[dict]:
     return rows
 
 
-def _read_ipc_stream_rows_bytes(data: bytes) -> list[dict]:
+def _read_ipc_stream_table(data: bytes) -> pa.Table | None:
     """Read rows from an IPC *stream*, tolerating a truncated tail.
 
     The DiskWriter appends batches to live stream files; a crash can leave the
@@ -199,7 +199,7 @@ def _read_ipc_stream_rows_bytes(data: bytes) -> list[dict]:
     try:
         reader = ipc.open_stream(io.BytesIO(data))
     except Exception:
-        return []
+        return None
     batches = []
     try:
         while True:
@@ -216,8 +216,8 @@ def _read_ipc_stream_rows_bytes(data: bytes) -> list[dict]:
         if callable(close):
             close()
     if not batches:
-        return []
-    return _table_to_rows(pa.Table.from_batches(batches))
+        return None
+    return pa.Table.from_batches(batches)
 
 
 def read_arrow_rows_sync(path: Path) -> list[dict]:
@@ -243,20 +243,43 @@ def read_arrow_rows_bytes(data: bytes) -> list[dict]:
     Tolerates a truncated tail (a crash mid-write cuts the last message; the
     incomplete tail is dropped rather than failing the whole read).
     """
+    table = _read_table_bytes(data)
+    return [] if table is None else _table_to_rows(table)
+
+
+def _read_table_bytes(data: bytes) -> pa.Table | None:
     if not data:
-        return []
+        return None
     try:
         reader = ipc.open_file(io.BytesIO(data))
         try:
-            table = reader.read_all()
+            return reader.read_all()
         finally:
             close = getattr(reader, "close", None)
             if callable(close):
                 close()
-        return _table_to_rows(table)
     except Exception:
         pass
-    return _read_ipc_stream_rows_bytes(data)
+    return _read_ipc_stream_table(data)
+
+
+def read_arrow_columns_sync(path: Path, columns: list[str]) -> dict[str, list]:
+    """Read only ``columns`` (those present) as Python lists.
+
+    Much cheaper than row dicts for wide files: a layer file's histogram
+    columns are never converted.
+    """
+    if not path.exists() or path.stat().st_size == 0:
+        return {}
+    try:
+        with open(path, "rb") as f:
+            table = _read_table_bytes(f.read())
+    except Exception:
+        return {}
+    if table is None:
+        return {}
+    present = [c for c in columns if c in table.column_names]
+    return {c: table.column(c).to_pylist() for c in present}
 
 
 class DiskWriter:

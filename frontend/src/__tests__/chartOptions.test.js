@@ -48,3 +48,25 @@ test('options: yMax pins the y range and a legend appears only for 2+ series', (
   )
   expect(two.legend.show).toBe(true)
 })
+
+test('a null loss is what NaN looks like on the wire, so it counts as non-finite', () => {
+  expect(offScaleMarker([0, 1], [1, null], 5).text).toBe('non-finite at step 1')
+})
+
+test('bandSpan keeps single-step bands visible', async () => {
+  const { bandSpan } = await import('../components/charts/chartOptions.js')
+  expect(bandSpan(100, 100, 3)).toEqual([98.5, 101.5])
+  expect(bandSpan(10, 50, 3)).toEqual([10, 50])
+})
+
+test('the y range follows the latest yMax and limit without a rebuild', () => {
+  let current = { yMax: null, limit: null }
+  const o = buildLineOptions(
+    { x: [0, 1], series: [{ label: 'Loss', values: [1, 2], color: '#000' }], height: 100 },
+    { width: 300 },
+    () => current
+  )
+  expect(o.scales.y.range(null, 0, 10)[1]).toBeGreaterThan(10)
+  current = { yMax: 5, limit: null }
+  expect(o.scales.y.range(null, 0, 10)).toEqual([0, 5])
+})

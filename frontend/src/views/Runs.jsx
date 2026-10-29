@@ -14,7 +14,8 @@ const fmt = (v) => (v == null ? '—' : Number.isFinite(v) ? String(+v.toPrecisi
 
 /** Summaries carry no per-step data, so the index can only tell spiked from stable. */
 function summaryStatus(run) {
-  if (run.last_loss != null && !Number.isFinite(run.last_loss)) return ['diverged', 'Diverged']
+  // NaN/inf arrive as null, so the server flags them in last_loss_finite.
+  if (run.last_loss_finite === false) return ['diverged', 'Diverged']
   if ((run.spike_count ?? 0) > 0) return ['spiked', 'Spiked']
   return ['stable', 'Stable']
 }

@@ -21,6 +21,7 @@ from trainscope.analysis import (
     read_arrow_sync,
     run_signal_signature,
 )
+from trainscope.io.writer import read_arrow_columns_sync
 from trainscope.layer_matrix import build_layer_matrix
 from trainscope.ui.auth import auth_enabled, auth_middleware_factory, verify_request
 
@@ -255,6 +256,10 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
             "n_global_rows": manifest.get("n_global_rows"),
             "spike_count": len(steps),
             "last_loss": last_row.get("loss"),
+            # JSON turns NaN/inf into null; say explicitly whether the run blew up.
+            "last_loss_finite": (
+                None if last_row.get("loss") is None else math.isfinite(last_row["loss"])
+            ),
             "last_grad_norm": last_row.get("grad_norm_before_clip"),
             "updated_at": manifest.get("updated_at"),
             "is_active": run_dir == rp,
@@ -903,6 +908,10 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
         _cache.set("ranked_layers", ranked)
         return ranked[: params.top_n]
 
+    # One build per key at a time: concurrent requests (several tabs, a live
+    # refetch) await the same task instead of each reading every layer file.
+    matrix_inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
+
     @app.get("/api/layers/matrix")
     async def get_layer_matrix(params: Annotated[MatrixParams, Depends()]) -> dict[str, Any]:
         if params.metric not in _MATRIX_METRICS:
@@ -910,29 +919,51 @@ def create_app(run_path: str, runs_root: str | None = None) -> FastAPI:
                 status_code=400, detail=f"metric must be one of {', '.join(_MATRIX_METRICS)}"
             )
         layers_dir = rp / "layers"
-        files: list[Path] = []
-        if await anyio.to_thread.run_sync(layers_dir.exists):
-            files = await anyio.to_thread.run_sync(lambda: sorted(layers_dir.glob("*.arrow")))
-        mtime = max((f.stat().st_mtime for f in files), default=0.0)
+
+        def list_files() -> tuple[list[Path], float]:
+            if not layers_dir.exists():
+                return [], 0.0
+            found = sorted(layers_dir.glob("*.arrow"))
+            return found, max((f.stat().st_mtime for f in found), default=0.0)
+
+        files, mtime = await anyio.to_thread.run_sync(list_files)
         key = f"matrix:{rp}:{params.metric}:{params.buckets}:{params.start}:{params.end}:{mtime}"
         cached = _cache.get(key)
         if cached is not None:
             return cast(dict[str, Any], cached)
 
-        series: dict[str, list[tuple[int, float | None]]] = {}
-        for arrow_file in files:
-            rows = await read_arrow(arrow_file)
-            series[_decode_layer_name(arrow_file.name)] = [
-                (r["step"], r.get(params.metric)) for r in rows if r.get("step") is not None
-            ]
-        spikes = await get_spike_steps(rp)
-        matrix = build_layer_matrix(
-            series,
-            buckets=params.buckets,
-            start=params.start,
-            end=params.end,
-            first_spike=min(spikes) if spikes else None,
-        )
+        task = matrix_inflight.get(key)
+        if task is None:
+
+            def build(first_spike: int | None) -> dict[str, Any]:
+                series: dict[str, list[tuple[int, float | None]]] = {}
+                for arrow_file in files:
+                    cols = read_arrow_columns_sync(arrow_file, ["step", params.metric])
+                    steps = cols.get("step", [])
+                    values = cols.get(params.metric, [None] * len(steps))
+                    series[_decode_layer_name(arrow_file.name)] = [
+                        (step, value) for step, value in zip(steps, values) if step is not None
+                    ]
+                return build_layer_matrix(
+                    series,
+                    buckets=params.buckets,
+                    start=params.start,
+                    end=params.end,
+                    first_spike=first_spike,
+                )
+
+            async def produce() -> dict[str, Any]:
+                spikes = await get_spike_steps(rp)
+                return await anyio.to_thread.run_sync(build, min(spikes) if spikes else None)
+
+            task = asyncio.ensure_future(produce())
+            matrix_inflight[key] = task
+
+            def forget(_done: asyncio.Task[dict[str, Any]], k: str = key) -> None:
+                matrix_inflight.pop(k, None)
+
+            task.add_done_callback(forget)
+        matrix: dict[str, Any] = await asyncio.shield(task)
         _cache.set(key, matrix)
         return matrix
 

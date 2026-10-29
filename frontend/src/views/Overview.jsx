@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { fetchLayerMatrix, fetchSignals } from '../api.js'
 import { useRun } from '../RunContext.jsx'
 import { CHART_COLORS } from '../theme.js'
@@ -15,7 +15,9 @@ import { computeWarmupBand } from '../utils/warmup.js'
 
 const GUTTER = 132
 const MATRIX_REFRESH_MS = 5000
+const ZOOM_DEBOUNCE_MS = 250
 const LIVE_WINDOW_MS = 30000
+const NO_MARKERS = []
 const SIGNAL_LABELS = {
   kurtosis: 'Activation kurtosis',
   grad_norm: 'Grad norm',
@@ -23,7 +25,8 @@ const SIGNAL_LABELS = {
   loss: 'Loss',
 }
 
-const fmt = (v) => (v == null ? '—' : Number.isFinite(v) ? String(+v.toPrecision(4)) : 'non-finite')
+// Rows always carry these fields; null is how JSON delivers NaN/inf.
+const fmt = (v) => (Number.isFinite(v) ? String(+v.toPrecision(4)) : 'non-finite')
 
 function median(values) {
   const s = [...values].sort((a, b) => a - b)
@@ -59,30 +62,69 @@ function useGrowing(length, liveStatus) {
   return liveStatus === 'connected' && Date.now() - lastGrowth < LIVE_WINDOW_MS
 }
 
-function useThrottledMatrix(length) {
+/**
+ * Layer matrix for the visible range. One request at a time: steps arriving
+ * while it is in flight queue a single follow-up (throttled to
+ * MATRIX_REFRESH_MS); a zoom change refetches after a short debounce. A result
+ * is only discarded on unmount, never because newer steps arrived.
+ */
+function useLayerMatrix(length, range) {
   const [matrix, setMatrix] = useState(null)
-  const last = useRef(0)
-  useEffect(() => {
-    let cancelled = false
-    const run = () => {
-      last.current = Date.now()
-      fetchLayerMatrix()
-        .then((m) => !cancelled && setMatrix(m))
-        .catch(() => !cancelled && setMatrix((m) => m ?? { layers: [] }))
-    }
-    const wait = MATRIX_REFRESH_MS - (Date.now() - last.current)
-    if (wait <= 0) {
-      run()
-      return () => {
-        cancelled = true
+  const s = useRef({ inflight: false, queued: null, last: 0, timer: null, mounted: true, range })
+  s.current.range = range
+
+  const fire = useCallback(() => {
+    const st = s.current
+    st.inflight = true
+    st.last = Date.now()
+    const r = st.range
+    fetchLayerMatrix(r ? { start: r[0], end: r[1] } : undefined)
+      .then((m) => st.mounted && setMatrix(m))
+      .catch(() => st.mounted && setMatrix((m) => m ?? { layers: [] }))
+      .finally(() => {
+        st.inflight = false
+        if (st.mounted && st.queued != null) {
+          const immediate = st.queued
+          st.queued = null
+          schedule(immediate)
+        }
+      })
+    // schedule is defined below and stable; listing it would create a cycle.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const schedule = useCallback(
+    (immediate) => {
+      const st = s.current
+      if (st.inflight) {
+        st.queued = st.queued || immediate
+        return
       }
-    }
-    const timer = setTimeout(run, wait)
+      clearTimeout(st.timer)
+      const wait = immediate ? ZOOM_DEBOUNCE_MS : MATRIX_REFRESH_MS - (Date.now() - st.last)
+      if (wait <= 0) fire()
+      else st.timer = setTimeout(fire, wait)
+    },
+    [fire]
+  )
+
+  useEffect(() => {
+    const st = s.current
+    st.mounted = true
     return () => {
-      cancelled = true
-      clearTimeout(timer)
+      st.mounted = false
+      clearTimeout(st.timer)
     }
-  }, [length])
+  }, [])
+  useEffect(() => schedule(false), [length, schedule])
+  const isFirst = useRef(true)
+  useEffect(() => {
+    if (isFirst.current) {
+      isFirst.current = false
+      return
+    }
+    schedule(true)
+  }, [range?.[0], range?.[1], schedule]) // eslint-disable-line react-hooks/exhaustive-deps
   return matrix
 }
 
@@ -93,7 +135,7 @@ export default function Overview() {
   const [xRange, setXRange] = useState(null)
   const [cursorStep, setCursorStep] = useState(null)
   const live = useGrowing(globalData.length, liveStatus)
-  const matrix = useThrottledMatrix(globalData.length)
+  const matrix = useLayerMatrix(globalData.length, xRange)
 
   const spikeCount = spikeEvents.length
   useEffect(() => {
@@ -127,10 +169,28 @@ export default function Overview() {
   const warnings = signalRows.filter((r) => r.name !== 'loss')
   const firstWarning = warnings.length ? warnings[0].step : null
 
-  const preSpikeGrad = firstSpike
-    ? gradNorms.filter((_, i) => steps[i] < firstSpike.startStep)
-    : gradNorms
-  const limit = threeSigma(preSpikeGrad)
+  const firstStart = firstSpike?.startStep ?? null
+  // Memoized so hovering (cursor state) does not re-sort or rebuild 100k-point arrays.
+  const limit = useMemo(() => {
+    const value = threeSigma(
+      firstStart == null ? gradNorms : gradNorms.filter((_, i) => steps[i] < firstStart)
+    )
+    return value == null ? null : { value, label: '3σ' }
+  }, [gradNorms, steps, firstStart])
+  const yMax = useMemo(() => lossYMax(steps, losses, firstStart), [steps, losses, firstStart])
+  const lossSeries = useMemo(
+    () => [{ label: 'Loss', values: losses, color: CHART_COLORS.loss }],
+    [losses]
+  )
+  const gradSeries = useMemo(
+    () => [{ label: 'Grad norm', values: gradNorms, color: CHART_COLORS.gradNorm }],
+    [gradNorms]
+  )
+  const domain = useMemo(() => [steps[0], steps[steps.length - 1]], [steps])
+  const spikeWindow = useMemo(
+    () => (firstSpike ? { from: firstSpike.startStep, to: firstSpike.endStep } : null),
+    [firstSpike]
+  )
   const warmup = useMemo(() => computeWarmupBand(meta, globalData), [meta, globalData])
   const bands = useMemo(
     () => [
@@ -232,18 +292,18 @@ export default function Overview() {
         >
           <LineChart
             {...chartProps}
-            series={[{ label: 'Loss', values: losses, color: CHART_COLORS.loss }]}
+            series={lossSeries}
             height={200}
             xAxis={false}
-            yMax={lossYMax(steps, losses, firstSpike?.startStep ?? null)}
+            yMax={yMax}
             ariaLabel={`Loss over ${steps.length} steps`}
           />
           <LineChart
             {...chartProps}
-            series={[{ label: 'Grad norm', values: gradNorms, color: CHART_COLORS.gradNorm }]}
+            series={gradSeries}
             height={128}
-            markers={[]}
-            limit={limit == null ? null : { value: limit, label: '3σ' }}
+            markers={NO_MARKERS}
+            limit={limit}
             ariaLabel={`Gradient norm over ${steps.length} steps`}
           />
         </Panel>
@@ -251,10 +311,10 @@ export default function Overview() {
         <Panel title="Gradient norm by layer" bodyClassName="px-2 pb-3 pt-3">
           <LayerHeatmap
             matrix={matrix}
-            domain={[steps[0], steps[steps.length - 1]]}
+            domain={domain}
             labelWidth={GUTTER}
             warningStep={firstWarning}
-            spikeWindow={firstSpike ? { from: firstSpike.startStep, to: firstSpike.endStep } : null}
+            spikeWindow={spikeWindow}
             xRange={xRange}
             cursorStep={cursorStep}
             onCellClick={(layer) => {
