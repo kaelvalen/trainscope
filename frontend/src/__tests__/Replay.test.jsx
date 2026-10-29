@@ -89,9 +89,7 @@ describe('Replay view', () => {
       '/api/replay': { config: null, skipped_batches: [], skipped_steps: [], n_global_steps: 5 },
     })
     renderReplay()
-    await waitFor(() =>
-      expect(screen.getByText(/No replay plan found/i)).toBeInTheDocument()
-    )
+    await waitFor(() => expect(screen.getByText(/No replay plan found/i)).toBeInTheDocument())
     expect(screen.getByText(/trainscope replay/)).toBeInTheDocument()
   })
 })

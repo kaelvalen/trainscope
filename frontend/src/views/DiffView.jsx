@@ -92,8 +92,8 @@ export default function DiffView() {
               Compare two steps
             </CardTitle>
             <p className="chart-card__description">
-              Find the layers whose weight distributions changed most between checkpoints. The
-              Δgrad badge shows each layer&apos;s gradient-norm change between the two steps.
+              Find the layers whose weight distributions changed most between checkpoints. The Δgrad
+              badge shows each layer&apos;s gradient-norm change between the two steps.
             </p>
           </div>
         </CardHeader>
@@ -215,7 +215,9 @@ export default function DiffView() {
                             {layer.grad_norm_change.toFixed(2)}
                           </Badge>
                         )}
-                        <Badge variant={index === 0 ? 'danger' : index === 1 ? 'warning' : 'accent'}>
+                        <Badge
+                          variant={index === 0 ? 'danger' : index === 1 ? 'warning' : 'accent'}
+                        >
                           {layer.kl_divergence.toFixed(4)}
                         </Badge>
                       </div>

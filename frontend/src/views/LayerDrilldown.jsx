@@ -2,21 +2,23 @@ import { useState, useEffect, useMemo } from 'react'
 import { useRun } from '../RunContext.jsx'
 import { fetchLayer } from '../api.js'
 import { CHART_COLORS } from '../theme.js'
-import Chart from '../components/Chart.jsx'
+import BarChart from '../components/charts/BarChart.jsx'
+import LineChart from '../components/charts/LineChart.jsx'
 import LayerSelect from '../components/LayerSelect.jsx'
 import StepScrubber from '../components/StepScrubber.jsx'
 import ErrorMessage from '../components/ErrorMessage.jsx'
 import EmptyState from '../components/EmptyState.jsx'
+import { Panel } from '../components/ui/Panel.jsx'
 import { Skeleton } from '../components/ui/Skeleton.jsx'
-import { StatCard } from '../components/ui/StatCard.jsx'
-import { ChartCard } from '../components/ui/ChartCard.jsx'
-import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/Card.jsx'
-import { Activity, BarChart3, FolderOpen, Scale, Search } from 'lucide-react'
+import { StatStrip } from '../components/ui/StatStrip.jsx'
+
+function finiteValues(arr) {
+  return (arr || []).filter((v) => typeof v === 'number' && Number.isFinite(v))
+}
 
 function mean(arr) {
   const vals = finiteValues(arr)
-  if (!vals.length) return NaN
-  return vals.reduce((a, b) => a + b, 0) / vals.length
+  return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : NaN
 }
 
 function stddev(arr) {
@@ -26,12 +28,34 @@ function stddev(arr) {
   return Math.sqrt(vals.reduce((a, b) => a + (b - m) ** 2, 0) / vals.length)
 }
 
-function finiteValues(arr) {
-  return (arr || []).filter((v) => typeof v === 'number' && Number.isFinite(v))
+const fmt = (v) => (typeof v === 'number' && Number.isFinite(v) ? String(+v.toPrecision(4)) : '—')
+
+/** `#layers?layer=<name>` (set by the Overview heatmap) preselects a layer. */
+function layerFromHash() {
+  const query = window.location.hash.split('?')[1]
+  return query ? new URLSearchParams(query).get('layer') : null
 }
 
-function formatFloat(v) {
-  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(4) : '—'
+const METRICS = {
+  gradient: {
+    label: 'Gradient L2',
+    description: 'Magnitude of the layer update signal over time.',
+    key: 'grad_l2_norm',
+    color: CHART_COLORS.gradNorm,
+  },
+  weight: {
+    label: 'Weight L2',
+    description: 'Weight magnitude exposes slow parameter drift or runaway updates.',
+    key: 'weight_l2_norm',
+    color: CHART_COLORS.loss,
+  },
+  kurtosis: {
+    label: 'Activation kurtosis',
+    description:
+      'Excess kurtosis is an early signal for heavy-tailed activations. It is sampled every few steps; gaps are steps that were not measured.',
+    key: 'act_kurtosis',
+    color: CHART_COLORS.kurtosis,
+  },
 }
 
 export default function LayerDrilldown() {
@@ -44,248 +68,164 @@ export default function LayerDrilldown() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    if (layerNames.length > 0 && !selectedLayer) {
-      setSelectedLayer(layerNames[0])
-    }
+    if (layerNames.length === 0 || selectedLayer) return
+    const wanted = layerFromHash()
+    setSelectedLayer(wanted && layerNames.includes(wanted) ? wanted : layerNames[0])
   }, [layerNames, selectedLayer])
 
   useEffect(() => {
-    if (!selectedLayer) return
-
+    if (!selectedLayer) return undefined
     let cancelled = false
     setLoading(true)
     setError(null)
-
     fetchLayer(selectedLayer)
       .then((rows) => {
         if (cancelled) return
         setLayerData(rows)
         if (rows.length > 0) setScrubStep(rows[rows.length - 1].step)
       })
-      .catch((err) => {
-        if (!cancelled) setError(err?.message || `Failed to load ${selectedLayer}.`)
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-
+      .catch((err) => !cancelled && setError(err?.message || `Failed to load ${selectedLayer}.`))
+      .finally(() => !cancelled && setLoading(false))
     return () => {
       cancelled = true
     }
   }, [selectedLayer])
 
   const steps = useMemo(() => layerData.map((r) => r.step), [layerData])
-  const gradNorms = useMemo(() => layerData.map((r) => r.grad_l2_norm), [layerData])
-  const weightNorms = useMemo(() => layerData.map((r) => r.weight_l2_norm), [layerData])
-  const kurtosisValues = useMemo(() => layerData.map((r) => r.act_kurtosis), [layerData])
-
-  const stats = useMemo(() => {
-    const mkMetric = (values) => {
-      const vals = finiteValues(values)
-      return {
-        mean: mean(values),
-        std: stddev(values),
-        max: vals.length ? Math.max(...vals) : NaN,
-        min: vals.length ? Math.min(...vals) : NaN,
-      }
-    }
-    return {
-      grad: mkMetric(gradNorms),
-      weight: mkMetric(weightNorms),
-      kurtosis: mkMetric(kurtosisValues),
-    }
-  }, [gradNorms, weightNorms, kurtosisValues])
+  const metric = METRICS[activeMetric]
+  const values = useMemo(() => layerData.map((r) => r[metric.key]), [layerData, metric.key])
+  const columns = useMemo(
+    () => ({
+      grad: layerData.map((r) => r.grad_l2_norm),
+      weight: layerData.map((r) => r.weight_l2_norm),
+      kurtosis: layerData.map((r) => r.act_kurtosis),
+    }),
+    [layerData]
+  )
 
   const scrubRow = useMemo(() => {
-    if (scrubStep == null) return layerData.length > 0 ? layerData[layerData.length - 1] : null
-    return layerData.find((r) => r.step === scrubStep) || layerData[layerData.length - 1] || null
+    if (scrubStep == null) return layerData[layerData.length - 1] ?? null
+    return layerData.find((r) => r.step === scrubStep) ?? layerData[layerData.length - 1] ?? null
   }, [layerData, scrubStep])
 
-  const { histCounts, histColors, binLabels } = useMemo(() => {
+  const histogram = useMemo(() => {
     const counts = scrubRow?.hist_counts || []
     const edges = scrubRow?.hist_edges || []
     const m = mean(counts)
     const s = stddev(counts)
-    const colors = counts.map((v) =>
-      Math.abs(v - m) > 2 * s ? CHART_COLORS.spike : CHART_COLORS.loss
-    )
-    const labels = edges
-      .slice(0, -1)
-      .map((e, i) => `${e.toFixed(3)} – ${(edges[i + 1] || 0).toFixed(3)}`)
-    return { histCounts: counts, histColors: colors, binLabels: labels }
+    const outlier = (v) => Number.isFinite(s) && Math.abs(v - m) > 2 * s
+    return {
+      x: edges.slice(0, -1),
+      normal: counts.map((v) => (outlier(v) ? null : v)),
+      outliers: counts.map((v) => (outlier(v) ? v : null)),
+      any: counts.some(outlier),
+    }
   }, [scrubRow])
-
-  const metricConfig = {
-    gradient: {
-      label: 'Gradient L2',
-      title: 'Gradient L2 norm',
-      description: 'Magnitude of the layer update signal over time.',
-      name: 'Grad L2 Norm',
-      values: gradNorms,
-      color: CHART_COLORS.gradNorm,
-    },
-    weight: {
-      label: 'Weight L2',
-      title: 'Weight L2 norm',
-      description: 'Weight magnitude can expose slow parameter drift or runaway updates.',
-      name: 'Weight L2 Norm',
-      values: weightNorms,
-      color: CHART_COLORS.weight,
-    },
-    kurtosis: {
-      label: 'Activation kurtosis',
-      title: 'Activation kurtosis',
-      description: 'Excess kurtosis is an early signal for heavy-tailed activations.',
-      name: 'Activation Kurtosis',
-      values: kurtosisValues,
-      color: CHART_COLORS.kurtosis,
-    },
-  }
-  const selectedMetric = metricConfig[activeMetric]
 
   if (layerNames.length === 0) {
     return (
-      <EmptyState icon={<Search className="h-5 w-5" />}>
-        No layers found. Has a training run completed?
-      </EmptyState>
+      <EmptyState>No layers recorded yet. Layers appear after the first traced step.</EmptyState>
     )
   }
 
   return (
-    <div className="space-y-5">
-      <Card className="control-card">
-        <CardHeader>
-          <div>
-            <CardTitle>Choose a layer</CardTitle>
-            <p className="chart-card__description">
-              Inspect gradient, weight, and activation signals.
-            </p>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <LayerSelect
-            id="layer-drilldown-select"
-            layers={layerNames}
-            value={selectedLayer}
-            onChange={setSelectedLayer}
-          />
-        </CardContent>
-      </Card>
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Layers</h1>
+          <p className="mt-1 text-sm text-muted">
+            Gradient, weight and activation signals for one parameter tensor.
+          </p>
+        </div>
+        <LayerSelect
+          id="layer-drilldown-select"
+          layers={layerNames}
+          value={selectedLayer}
+          onChange={setSelectedLayer}
+        />
+      </div>
 
       {loading && (
-        <div className="space-y-4">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-64" />
-          <Skeleton className="h-64" />
+        <div className="space-y-3">
+          <Skeleton className="h-20" />
+          <Skeleton className="h-72" />
         </div>
       )}
 
       <ErrorMessage message={error} />
 
       {!loading && layerData.length === 0 && selectedLayer && !error && (
-        <EmptyState icon={<FolderOpen className="h-5 w-5" />}>
-          No data for layer: {selectedLayer}
-        </EmptyState>
+        <EmptyState>No data recorded for {selectedLayer}.</EmptyState>
       )}
 
       {!loading && layerData.length > 0 && (
         <>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <StatCard
-              label="Mean Grad L2"
-              value={formatFloat(stats.grad.mean)}
-              subtitle={`σ = ${formatFloat(stats.grad.std)}`}
-              icon={Activity}
-            />
-            <StatCard
-              label="Mean Weight L2"
-              value={formatFloat(stats.weight.mean)}
-              subtitle={`max ${formatFloat(stats.weight.max)}`}
-              icon={Scale}
-            />
-            <StatCard
-              label="Mean Kurtosis"
-              value={formatFloat(stats.kurtosis.mean)}
-              subtitle={`max ${formatFloat(stats.kurtosis.max)}`}
-              icon={BarChart3}
-            />
-          </div>
+          <StatStrip
+            items={[
+              { label: 'Mean grad L2', value: fmt(mean(columns.grad)) },
+              { label: 'Grad L2 σ', value: fmt(stddev(columns.grad)) },
+              { label: 'Mean weight L2', value: fmt(mean(columns.weight)) },
+              { label: 'Max kurtosis', value: fmt(Math.max(...finiteValues(columns.kurtosis))) },
+            ]}
+          />
 
-          <div className="metric-tabs" role="tablist" aria-label="Layer metrics">
-            <span className="metric-tabs__label">Signal</span>
-            {Object.entries(metricConfig).map(([key, metric]) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={activeMetric === key}
-                className={activeMetric === key ? 'metric-tab is-active' : 'metric-tab'}
-                onClick={() => setActiveMetric(key)}
-              >
-                {metric.label}
-              </button>
-            ))}
-          </div>
-
-          <ChartCard title={selectedMetric.title} description={selectedMetric.description}>
-            <Chart
-              data={[
-                {
-                  x: steps,
-                  y: selectedMetric.values,
-                  type: 'scatter',
-                  mode: 'lines',
-                  name: selectedMetric.name,
-                  // Activation metrics are only sampled every N steps; null
-                  // samples (not measured) render as gaps, not as zero.
-                  connectgaps: false,
-                  line: { color: selectedMetric.color, width: 1.5 },
-                },
-              ]}
-              layout={{
-                height: 300,
-                shapes:
-                  activeMetric === 'kurtosis'
-                    ? [
-                        {
-                          type: 'line',
-                          x0: steps[0],
-                          x1: steps[steps.length - 1],
-                          y0: 0,
-                          y1: 0,
-                          line: { color: CHART_COLORS.muted, width: 1, dash: 'dot' },
-                        },
-                      ]
-                    : [],
-                uirevision: `layer-${selectedLayer}-${activeMetric}`,
-              }}
-            />
-          </ChartCard>
+          <Panel
+            title={metric.label}
+            actions={
+              <div role="tablist" aria-label="Layer metric" className="flex gap-1">
+                {Object.entries(METRICS).map(([key, m]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeMetric === key}
+                    onClick={() => setActiveMetric(key)}
+                    className={`h-7 rounded-control px-2.5 text-xs transition-colors duration-150 ${
+                      activeMetric === key
+                        ? 'bg-ink text-surface'
+                        : 'text-muted hover:bg-hover hover:text-ink'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            <p className="text-sm text-muted">{metric.description}</p>
+            <div className="mt-3">
+              <LineChart
+                x={steps}
+                height={280}
+                series={[{ label: metric.label, values, color: metric.color }]}
+                limit={activeMetric === 'kurtosis' ? { value: 0, label: '0' } : null}
+                markers={scrubRow ? [{ at: scrubRow.step, kind: 'warning' }] : []}
+                ariaLabel={`${metric.label} for ${selectedLayer}`}
+              />
+            </div>
+          </Panel>
 
           <StepScrubber steps={steps} value={scrubStep} onChange={setScrubStep} />
 
-          {histCounts.length > 0 && (
-            <ChartCard
-              title={`Weight histogram at step ${scrubRow?.step ?? '—'}`}
-              description="Red bins sit more than two standard deviations from the bin-count mean."
-            >
-              <Chart
-                data={[
-                  {
-                    x: binLabels,
-                    y: histCounts,
-                    type: 'bar',
-                    marker: { color: histColors },
-                    name: 'Weight Histogram',
-                  },
-                ]}
-                layout={{
-                  height: 280,
-                  xaxis: { tickangle: -35, tickfont: { size: 9 } },
-                  uirevision: `layer-${selectedLayer}-hist`,
-                }}
-              />
-            </ChartCard>
+          {histogram.x.length > 0 && (
+            <Panel title={`Weight histogram at step ${scrubRow?.step ?? '—'}`}>
+              <p className="text-sm text-muted">
+                {histogram.any
+                  ? 'Red bins sit more than two standard deviations from the mean bin count.'
+                  : 'No bin sits more than two standard deviations from the mean bin count.'}
+              </p>
+              <div className="mt-3">
+                <BarChart
+                  x={histogram.x}
+                  height={240}
+                  series={[
+                    { label: 'Weights', values: histogram.normal, color: 'var(--muted)' },
+                    { label: 'Outlier bins', values: histogram.outliers, color: 'var(--red)' },
+                  ]}
+                  ariaLabel={`Weight histogram for ${selectedLayer} at step ${scrubRow?.step}`}
+                />
+              </div>
+            </Panel>
           )}
         </>
       )}

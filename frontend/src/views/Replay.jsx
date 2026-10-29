@@ -90,11 +90,7 @@ export default function Replay() {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-        <StatCard
-          label="Skipped batches"
-          value={data.skipped_batches.length}
-          icon={RotateCcw}
-        />
+        <StatCard label="Skipped batches" value={data.skipped_batches.length} icon={RotateCcw} />
         <StatCard label="Steps to skip" value={data.skipped_steps.length} icon={RotateCcw} />
         <StatCard label="Total training steps" value={data.n_global_steps} icon={RotateCcw} />
       </div>
@@ -141,10 +137,7 @@ export default function Replay() {
           </p>
         </CardHeader>
         <CardContent>
-          <Chart
-            data={chartData}
-            layout={{ height: 320, margin: { l: 52, r: 12, t: 8, b: 36 } }}
-          />
+          <Chart data={chartData} layout={{ height: 320, margin: { l: 52, r: 12, t: 8, b: 36 } }} />
         </CardContent>
       </Card>
     </div>
