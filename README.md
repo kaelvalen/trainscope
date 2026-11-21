@@ -1,3 +1,6 @@
+> **trainscope has moved to [kaelvalen/weightsmith](https://github.com/kaelvalen/weightsmith/tree/main/trainscope)** (`trainscope/`).
+> This repository is archived. `pip install trainscope` keeps working; new releases (1.11.0 and later) are published from there.
+
 # trainscope
 
 [![PyPI](https://img.shields.io/pypi/v/trainscope)](https://pypi.org/project/trainscope)
